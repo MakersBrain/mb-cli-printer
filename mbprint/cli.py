@@ -311,15 +311,44 @@ def _ask(question: str) -> bool:
         return False
 
 
+def _ipp_media(args: Args, printer: printers.PrinterDef) -> mediamod.Media | None:
+    """Ask a network printer which roll is loaded, over IPP.
+
+    The printer knows better than the layout does, and printing on the wrong
+    roll wastes labels, so this wins over inferring from the label size.
+    """
+    host = getattr(args, "host", None) or cfg.load().get("host")
+    if not host or _pick(args, "transport", "ble") != "tcp":
+        return None
+    info = ipp.loaded_media(host)
+    if not info or not info.get("size_mm"):
+        return None
+    width, length = info["size_mm"]
+    media = mediamod.from_size(width, length, printer.id)
+    if media is None:
+        log.warning(
+            "the printer reports %gx%gmm media, which is not in the media table; "
+            "pass --media to choose the closest roll",
+            width,
+            length,
+        )
+        return None
+    if info.get("reasons"):
+        log.warning("printer reports: %s", ", ".join(info["reasons"]))
+    log.info("printer reports %s loaded (%s)", media.id, info["keyword"])
+    return media
+
+
 def _resolve_media(
     args: Args, label: layout.Label, printer: printers.PrinterDef
 ) -> mediamod.Media | None:
     """Which DK roll a Brother job prints on; None for every other family."""
     if printer.protocol != "brother":
         return None
-    media = mediamod.resolve(
-        _pick(args, "media", None), label.width_mm, label.height_mm, printer.id
-    )
+    explicit = _pick(args, "media", None)
+    media = (mediamod.by_id(explicit) if explicit else None) or _ipp_media(args, printer)
+    if media is None:
+        media = mediamod.resolve(explicit, label.width_mm, label.height_mm, printer.id)
     log.info(
         "media: %s (%s), printable %dx%s dots, %d dots right margin",
         media.id,

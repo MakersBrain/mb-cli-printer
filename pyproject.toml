@@ -27,4 +27,10 @@ build-backend = "hatchling.build"
 packages = ["mbprint"]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    # Reference implementation of the Brother QL raster language. The test
+    # suite diffs our byte stream against it; skipped when absent.
+    "brother-ql",
+    "packbits",
+]

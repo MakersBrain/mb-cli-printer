@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from mbprint import data, layout, pdf, printers, protocol
 from mbprint import raster as R
@@ -607,3 +607,156 @@ def test_filters_work_in_data_templates(csv_path):
     ])
     assert rs.records[0]["qr"] == "https://shop.example/alpha-gadget#ag-ex-0001"
     assert rs.records[0]["tag"] == "40 EUR"
+
+
+# --- Brother QL ------------------------------------------------------------
+
+
+def _brother_image(media_id, model="ql-1110nwb"):
+    """An image already at the roll's printable size, so fit() is a no-op."""
+    from mbprint import media as M
+
+    m = M.by_id(media_id)
+    w = m.dots_printable[0]
+    h = m.dots_printable[1] or 500
+    img = Image.new("RGB", (w, h), "white")
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([10, 10, w // 2, h // 3], fill="black")
+    draw.line([0, h - 5, w, h - 5], fill="black", width=3)
+    return m, img
+
+
+def _brother_stream(media_id, compress=True, cut=True, model="ql-1110nwb"):
+    from mbprint import media as M
+
+    m, img = _brother_image(media_id, model)
+    printer = printers.by_id(model)
+    opts = protocol.PrintOptions(media=m, compress=compress, cut=cut)
+    rst = protocol.prepare_raster(M.fit(img, m, printer.min_rows), printer, opts,
+                                  "threshold")
+    chunks: list[bytes] = []
+    transport = FileTransport(path="-", max_write=1 << 20)
+
+    async def run():
+        async with transport:
+            transport.send = lambda d: chunks.append(bytes(d)) or asyncio.sleep(0)
+            await protocol.print_raster(transport, printer, rst, opts)
+
+    asyncio.run(run())
+    return img, b"".join(chunks)
+
+
+def test_packbits_matches_the_reference_encoder():
+    ref = pytest.importorskip("packbits")
+    import random
+
+    random.seed(7)
+    cases = [b"", b"\x01", b"\x00" * 300, b"\xff" * 1000, bytes(range(60))]
+    for _ in range(200):
+        n = random.randint(1, 200)
+        cases.append(bytes(random.choice([0, 255, random.randint(0, 255)])
+                           for _ in range(n)))
+    for case in cases:
+        assert protocol.packbits(case) == ref.encode(case), case[:32].hex(" ")
+
+
+@pytest.mark.parametrize("media_id,compress", [
+    ("102x152", True), ("102x152", False), ("62", True), ("102", True),
+    ("62x29", True), ("d58", True), ("29x90", False), ("103x164", True),
+])
+def test_brother_stream_matches_brother_ql(media_id, compress):
+    """Our byte stream must equal what brother_ql produces for the same image.
+
+    This is the only verification available without the hardware, so it covers
+    byte-unaligned printable widths (1164, 618, 306 dots) where placement is
+    easiest to get wrong, and both compressed and raw raster lines.
+    """
+    pytest.importorskip("brother_ql")
+    from brother_ql.conversion import convert
+    from brother_ql.models import ModelsManager
+    from brother_ql.raster import BrotherQLRaster
+
+    if "QL-1110NWB" not in [m.identifier for m in ModelsManager().iter_elements()]:
+        pytest.skip("installed brother_ql predates the QL-1100 series")
+
+    img, ours = _brother_stream(media_id, compress=compress)
+    qlr = BrotherQLRaster("QL-1110NWB")
+    qlr.exception_on_warning = True
+    theirs = convert(qlr, [img], media_id, cut=True, compress=compress, dither=False,
+                     threshold=70, hq=True, rotate=0)
+    assert ours == theirs
+
+
+def test_brother_preamble_and_print_information():
+    _, stream = _brother_stream("62x29")
+    assert stream.startswith(bytes([0x1B, 0x69, 0x61, 0x01]))    # switch to raster
+    assert bytes(200) in stream                                   # invalidate
+    assert bytes([0x1B, 0x40]) in stream                          # ESC @
+    assert bytes([0x1B, 0x69, 0x53]) in stream                    # status request
+    # ESC i z: flags, die-cut media, 62mm wide, 29mm long
+    assert bytes([0x1B, 0x69, 0x7A, 0xCE, 0x0B, 62, 29]) in stream
+    assert bytes([0x1B, 0x69, 0x4D, 0x40]) in stream              # autocut on
+    assert stream.endswith(bytes([0x1A]))                         # print and eject
+
+
+def test_brother_continuous_media_reports_no_length():
+    _, stream = _brother_stream("62")
+    # Continuous media type 0x0A, and a length of zero.
+    assert bytes([0x1B, 0x69, 0x7A, 0xCE, 0x0A, 62, 0]) in stream
+    assert bytes([0x1B, 0x69, 0x64, 35, 0]) in stream   # 35 dot feed margin
+
+
+def test_brother_compression_command_only_when_compressing():
+    _, compressed = _brother_stream("62x29", compress=True)
+    _, raw = _brother_stream("62x29", compress=False)
+    assert bytes([0x4D, 0x02]) in compressed
+    assert bytes([0x4D]) not in raw.split(bytes([0x1B, 0x69, 0x64]))[1][:4]
+    assert len(raw) > len(compressed)
+
+
+def test_brother_places_the_label_by_its_right_margin():
+    from mbprint import media as M
+
+    printer = printers.by_id("ql-1110nwb")
+    m = M.by_id("62x29")
+    img = Image.new("RGB", m.dots_printable, "white")
+    img.putpixel((0, 0), (0, 0, 0))            # single dot, top-left of the label
+    opts = protocol.PrintOptions(media=m)
+    rst = protocol.prepare_raster(img, printer, opts, "threshold")
+
+    assert rst.width_bytes == 162              # 1296 dot head
+    # left = 1296 - 696 printable - (12 media + 44 model) = 544
+    unpacked = R.to_image(rst)
+    assert unpacked.getpixel((544, 0)) == 0
+    assert unpacked.getpixel((543, 0)) != 0
+
+
+def test_place_uses_the_true_width_not_the_padded_one():
+    # 1164 dots is not a whole number of bytes: the 4 padding dots must not
+    # push the content left, which is exactly what a byte-wide raster would do.
+    img = Image.new("RGB", (1164, 4), "white")
+    img.putpixel((1163, 0), (0, 0, 0))         # rightmost dot of the content
+    rst = R.pack(img, "threshold")
+    assert rst.width_bytes == 146 and rst.pixel_width == 1164
+    placed = R.place(rst, 162, right_margin_dots=56)
+    assert R.to_image(placed).getpixel((1296 - 56 - 1, 0)) == 0
+
+
+def test_media_resolution_and_fitting():
+    from mbprint import media as M
+
+    assert M.resolve(None, 102, 153, "ql-1110nwb").id == "102x152"
+    assert M.resolve("62", 0, 0, "ql-1110nwb").id == "62"
+    with pytest.raises(SystemExit):
+        M.resolve("102x152", 0, 0, "m110")      # wide media, narrow printer
+    with pytest.raises(SystemExit):
+        M.resolve("nonsense", 0, 0, "ql-1110nwb")
+
+    m = M.by_id("102x152")
+    fitted = M.fit(Image.new("RGB", (816, 1216), "white"), m)
+    assert fitted.size == m.dots_printable       # die-cut is exact
+
+    endless = M.by_id("62")
+    fitted = M.fit(Image.new("RGB", (400, 100), "white"), endless, min_rows=301)
+    assert fitted.width == endless.dots_printable[0]
+    assert fitted.height == 301                  # padded up to the minimum

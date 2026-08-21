@@ -7,7 +7,7 @@ It implements the printer protocols and transports from
 loads the same `label.json` layouts that designer exports, fills them from a
 CSV, and either prints them over Bluetooth or writes a PDF.
 
-- seven protocol families, from the M02 pocket printer to TSPL shipping labels
+- eight protocol families, from the M02 pocket printer to the Brother QL-1110NWB
 - BLE, classic Bluetooth serial, USB, and a capture-to-file transport
 - writes clamped to the negotiated link MTU, so no per-model tuning
 - roller alignment: alignment plus dot-level offsets, saved per printer
@@ -262,7 +262,8 @@ mbprint config list
 Config lives in `~/.config/mbprint/config.json` and supplies the default for any
 flag you do not pass. Scalar keys: `model`, `transport`, `address`, `device`,
 `density`, `feed`, `speed`, `offset_x`, `offset_y`, `align`, `dither`,
-`continuous`, `gap_mm`, `tspl_offset_mm`, `label`. Plus `data.<field>` for
+`continuous`, `gap_mm`, `tspl_offset_mm`, `label`, `media`, `host`. Plus
+`data.<field>` for
 [derived field templates](#fields), which keep the order you define them in.
 
 ## Density
@@ -344,7 +345,8 @@ mbprint scan              # BLE scan, with model detection
 mbprint status            # battery, paper, cover, firmware, MTU
 ```
 
-Seven protocol families are implemented, matching the reference driver:
+Eight protocol families are implemented; seven match the phomymo reference
+driver, and `brother` was added from the QL raster command language:
 
 | protocol   | models                                   | notes                                        |
 |------------|------------------------------------------|----------------------------------------------|
@@ -355,6 +357,7 @@ Seven protocol families are implemented, matching the reference driver:
 | `d-series` | D30, D35, D50, Q30                       | prints sideways, gap detection, cutter pad   |
 | `p12`      | P12, P12 Pro, A30                        | tape, 6-packet handshake with reply waits    |
 | `tspl`     | PM-241-BT                                | text protocol, inverted BITMAP               |
+| `brother`  | QL-1100, QL-1110NWB, QL-1115NWB          | ESC/P raster on DK media, 300dpi, PackBits   |
 
 Sideways models (D-series, P12) rotate the label 90° clockwise before it is
 fitted to the head. A 30x20mm label therefore needs 20mm of tape, and P12 will
@@ -368,11 +371,58 @@ printer that negotiates 517 gets 128-byte writes, one stuck at 23 gets 20-byte
 writes, and neither needs configuring. `--mtu N` caps it further and
 `--chunk-delay MS` changes the inter-chunk pacing.
 
+## Brother QL
+
+The QL-1100 series speaks Brother's ESC/P raster language rather than ESC/POS,
+on DK media whose geometry is fixed per roll. Everything else — layouts, fields,
+filters, PDF, previews — works the same.
+
+```sh
+# network, the usual link for a QL-1110NWB
+mbprint print -l label.json -c inventory.csv \
+  --model ql-1110nwb --transport tcp --host 192.168.1.50 --media 102x152
+
+# USB
+mbprint print -l label.json -c inventory.csv --model ql-1110nwb -t usb --media 62
+```
+
+`--media` names the loaded roll; `mbprint printers` lists the models and the
+table below the DK ids. Omit it and the roll is inferred from the layout size,
+which works when your label is drawn at the media's dimensions.
+
+| id | roll |
+|---|---|
+| `12` `29` `38` `50` `54` `62` `102` `103` | continuous, width in mm |
+| `17x54` `17x87` `23x23` `29x42` `29x90` `39x48` `39x90` `52x29` `60x86` `62x29` `62x100` `102x51` `102x152` `103x164` | die-cut |
+| `d12` `d24` `d58` | round die-cut |
+
+`102`, `103`, `102x51`, `102x152` and `103x164` need a wide model.
+
+Three things differ from the Phomemo families:
+
+- **Placement is by right margin.** Each roll has a printable area narrower
+  than the tape, offset from the right edge of the 1296-dot head. `--offset-x`
+  adds to that offset rather than replacing the alignment logic, and
+  `--align` does not apply.
+- **The label is fitted to the roll.** Die-cut media has a fixed printable
+  rectangle, so the rendered label is scaled to fit and centred; continuous
+  media fixes only the width. Layouts are rendered at 300 dpi natively.
+- **Raster lines are PackBits-compressed** by default, which cuts a 4x6in job
+  from 274KB to 15KB. `--no-compress` sends them raw.
+
+Finishing: `--no-cut` leaves the labels joined, `--cut-every N` cuts every Nth.
+
+Verification without hardware: our byte stream is compared against the
+`brother_ql` project's output for the same image, byte for byte, across eight
+media and compression combinations — including the rolls whose printable width
+is not a whole number of bytes, where placement is easiest to get wrong.
+
 ## Transports
 
 | flag                            | use                                          |
 |---------------------------------|----------------------------------------------|
 | `--transport ble` (default)     | `--device NAME` or `--address MAC`           |
+| `--transport tcp`               | `--host IP [--tcp-port 9100]`, network printers |
 | `--transport serial`            | `--port /dev/rfcomm0`, classic Bluetooth SPP |
 | `--transport usb`               | `--usb-vid 0x0483 --usb-pid 0x5740`          |
 | `--transport file --out job.bin`| capture the byte stream, print nothing       |
@@ -545,13 +595,17 @@ Grouped by what they affect. Source and render options apply to `print`, `pdf`,
 | `--align left\|center\|right` | where the label sits across the head |
 | `--offset-x N`, `--offset-y N` | roller alignment, in dots |
 | `--gap-mm N`, `--tspl-offset-mm N` | TSPL gap and offset |
+| `--media ID` | Brother DK roll, see [Brother QL](#brother-ql) |
+| `--no-cut`, `--cut-every N` | Brother cut behaviour |
+| `--no-compress` | Brother: send raster lines raw |
 
 **Transport**
 
 | option | meaning |
 |---|---|
-| `-t`, `--transport KIND` | `ble`, `serial`, `usb`, `file` |
+| `-t`, `--transport KIND` | `ble`, `tcp`, `serial`, `usb`, `file` |
 | `--device NAME`, `--address MAC` | which BLE printer |
+| `--host IP`, `--tcp-port N` | network printer (default port 9100) |
 | `--port PATH`, `--baud N` | serial / RFCOMM |
 | `--usb-vid ID`, `--usb-pid ID` | USB device |
 | `--mtu N` | cap the write size |
@@ -595,11 +649,12 @@ mbprint/
   protocol.py      the seven print flows and their command builders
   printers.py      model definitions and detection
   printers.json    built-in model table
+  media.py         Brother DK roll geometry and label fitting
   pdf.py           exact-size and tiled PDF output
   config.py        persistent defaults
   log.py           logger setup, TRACE level, hex dumps
   ui.py            console detection, progress bars, rich fallbacks
-  transport/       ble.py, serial_port.py, usb.py, file.py
+  transport/       ble.py, tcp.py, serial_port.py, usb.py, file.py
 ```
 
 The pipeline is the same for every command: `data.build_records` turns CSV rows
@@ -616,10 +671,11 @@ swaps in a paced file transport instead of a printer.
 uv run pytest tests -q
 ```
 
-Sixty-seven tests covering templating, filters and optional segments, the
+Eighty-two tests covering templating, filters and optional segments, the
 missing-field gate, column mapping and copy counts, raster packing, alignment,
 offsets and rotation, the framing of every protocol, MTU clamping end to end,
 model detection, PDF page geometry, the config data table, the progress
-reporters, and the logging setup including the command trace. No hardware
+reporters, the logging setup including the command trace, and the Brother
+stream checked byte for byte against brother_ql. No hardware
 needed: the file transport captures what would have been sent, and `--dry-run`
 exercises the whole flow.

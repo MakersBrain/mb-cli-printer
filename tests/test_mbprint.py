@@ -27,9 +27,7 @@ def csv_path(tmp_path):
 
 def test_optional_segment_drops_when_field_empty():
     tpl = "https://shop.example/x#{{sku}}[[/{{batch}}]]"
-    assert layout.substitute(tpl, {"sku": "AG-1", "batch": ""}) == (
-        "https://shop.example/x#AG-1"
-    )
+    assert layout.substitute(tpl, {"sku": "AG-1", "batch": ""}) == ("https://shop.example/x#AG-1")
     assert layout.substitute(tpl, {"sku": "AG-1", "batch": "L7"}) == (
         "https://shop.example/x#AG-1/L7"
     )
@@ -54,14 +52,17 @@ def test_records_map_odoo_columns(csv_path):
     first = rs.records[0]
     assert first["name"] == "Alpha Gadget"
     assert first["price_short"] == "40"
-    assert "qr" not in first          # nothing is derived unless --data says so
+    assert "qr" not in first  # nothing is derived unless --data says so
 
 
 def test_data_templates_are_evaluated_in_order(csv_path):
-    rs = data.build_records(csv_path, data_entries=[
-        ("brand", "Ceramics"),
-        ("qr", "https://shop.example/{{brand}}#{{sku}}[[/{{batch}}]]"),
-    ])
+    rs = data.build_records(
+        csv_path,
+        data_entries=[
+            ("brand", "Ceramics"),
+            ("qr", "https://shop.example/{{brand}}#{{sku}}[[/{{batch}}]]"),
+        ],
+    )
     first = rs.records[0]
     assert first["brand"] == "Ceramics"
     assert first["qr"] == "https://shop.example/Ceramics#AG-EX-0001"
@@ -146,8 +147,8 @@ def test_rotate_cw_swaps_axes_and_moves_the_corner():
 def test_round_trip_through_to_image():
     src = _dot_image(dot=(5, 3))
     img = R.to_image(R.pack(src, "threshold"))
-    assert img.getpixel((5, 3)) == 0    # black dot
-    assert img.getpixel((6, 3)) != 0    # its neighbour stayed white
+    assert img.getpixel((5, 3)) == 0  # black dot
+    assert img.getpixel((6, 3)) != 0  # its neighbour stayed white
 
 
 # --- protocol --------------------------------------------------------------
@@ -171,11 +172,11 @@ def _capture(printer, img, opts=None, dither="threshold"):
 def test_m_series_stream_has_init_heat_and_raster_header():
     printer = printers.by_id("m200")
     rst, stream = _capture(printer, _dot_image(48 * 8, 4))
-    assert stream.startswith(bytes([0x1B, 0x40]))          # ESC @
-    assert bytes([0x1B, 0x37]) in stream                   # ESC 7 heat
+    assert stream.startswith(bytes([0x1B, 0x40]))  # ESC @
+    assert bytes([0x1B, 0x37]) in stream  # ESC 7 heat
     header = bytes([0x1D, 0x76, 0x30, 0x00, rst.width_bytes, 0x00, rst.height, 0x00])
     assert header in stream
-    assert stream.endswith(bytes([0x1B, 0x4A, 32]))        # ESC J feed
+    assert stream.endswith(bytes([0x1B, 0x4A, 32]))  # ESC J feed
 
 
 def test_m02_stream_is_prefixed():
@@ -187,8 +188,8 @@ def test_m02_stream_is_prefixed():
 def test_d_series_rotates_and_ends_with_gap_detect():
     printer = printers.by_id("d-series")
     rst, stream = _capture(printer, _dot_image(80, 40))
-    assert (rst.width_px, rst.height) == (40, 80)          # rotated
-    assert bytes([0x1F, 0x11, 0x0A]) in stream             # gap media
+    assert (rst.width_px, rst.height) == (40, 80)  # rotated
+    assert bytes([0x1F, 0x11, 0x0A]) in stream  # gap media
     assert stream.endswith(bytes([0x1B, 0x64, 0x00]))
 
 
@@ -196,10 +197,9 @@ def test_d_series_continuous_bakes_the_feed_into_the_raster():
     printer = printers.by_id("d-series")
     opts = protocol.PrintOptions(continuous=True, feed=16)
     rst, stream = _capture(printer, _dot_image(80, 40), opts)
-    assert bytes([0x1F, 0x11, 0x0B]) in stream             # continuous media
+    assert bytes([0x1F, 0x11, 0x0B]) in stream  # continuous media
     rows = protocol.D_CUTTER_OFFSET + opts.feed + rst.height
-    assert bytes([0x1D, 0x76, 0x30, 0x00, rst.width_bytes, 0x00, rows % 256,
-                  rows // 256]) in stream
+    assert bytes([0x1D, 0x76, 0x30, 0x00, rst.width_bytes, 0x00, rows % 256, rows // 256]) in stream
 
 
 def test_tspl_uses_label_millimetres_and_inverts_the_bitmap():
@@ -226,7 +226,7 @@ def test_p12_rejects_a_label_wider_than_the_tape():
 
 
 def test_chunking_never_exceeds_the_link_mtu():
-    printer = printers.by_id("m200")           # 128-byte protocol chunk
+    printer = printers.by_id("m200")  # 128-byte protocol chunk
     transport = FileTransport(path="-", max_write=20)
     assert protocol.effective_chunk(printer, transport) == 20
     transport.max_write = 512
@@ -235,8 +235,9 @@ def test_chunking_never_exceeds_the_link_mtu():
 
 def test_writes_respect_the_mtu_end_to_end():
     printer = printers.by_id("m200")
-    rst = protocol.prepare_raster(_dot_image(48 * 8, 30), printer,
-                                  protocol.PrintOptions(), "threshold")
+    rst = protocol.prepare_raster(
+        _dot_image(48 * 8, 30), printer, protocol.PrintOptions(), "threshold"
+    )
     transport = FileTransport(path="-", max_write=23)
     sizes: list[int] = []
 
@@ -260,15 +261,17 @@ def test_detect_matches_the_longest_pattern_first():
 
 
 def test_pdf_page_is_exactly_the_label_size(tmp_path):
-    out = pdf.write_labels([Image.new("RGB", (240, 160), "white")] * 2,
-                           tmp_path / "l.pdf", dots_per_mm=8)
+    out = pdf.write_labels(
+        [Image.new("RGB", (240, 160), "white")] * 2, tmp_path / "l.pdf", dots_per_mm=8
+    )
     blob = out.read_bytes()
     assert b"/MediaBox [ 0 0 85.03937007874016 56.69291338582678 ]" in blob
 
 
 def test_pdf_sheet_tiles_labels(tmp_path):
-    out = pdf.write_sheet([Image.new("RGB", (240, 160), "white")] * 5,
-                          tmp_path / "s.pdf", dots_per_mm=8, page="a4")
+    out = pdf.write_sheet(
+        [Image.new("RGB", (240, 160), "white")] * 5, tmp_path / "s.pdf", dots_per_mm=8, page="a4"
+    )
     assert out.exists() and out.stat().st_size > 0
 
 
@@ -378,7 +381,7 @@ def test_plain_progress_throttles_and_finishes(capsys):
     bar.finish_label()
     err = capsys.readouterr().err
     assert "[2/5] AG-2:  50%" in err
-    assert "[2/5] AG-2:   1%" in err            # the first update always shows
+    assert "[2/5] AG-2:   1%" in err  # the first update always shows
     assert "  2%" not in err and "  3%" not in err  # then sub-5% steps are dropped
     assert err.rstrip().endswith("done")
 
@@ -434,10 +437,23 @@ def test_dry_run_walks_the_whole_flow_without_hardware(tmp_path, capsys):
         encoding="utf-8",
     )
     out = tmp_path / "job.bin"
-    code = main([
-        "print", "-l", str(label), "--set", "ref=AG-1", "--model", "m110",
-        "--dry-run", "--chunk-delay", "0", "--out", str(out), "-q",
-    ])
+    code = main(
+        [
+            "print",
+            "-l",
+            str(label),
+            "--set",
+            "ref=AG-1",
+            "--model",
+            "m110",
+            "--dry-run",
+            "--chunk-delay",
+            "0",
+            "--out",
+            str(out),
+            "-q",
+        ]
+    )
     assert code == 0
     # The capture holds a real M110 job: header, raster and footer.
     stream = out.read_bytes()
@@ -451,9 +467,18 @@ def test_dry_run_uses_a_simulated_ble_mtu(tmp_path):
 
     from mbprint import cli
 
-    args = argparse.Namespace(transport="file", mtu=None, out=None, dry_run=True,
-                              port=None, baud=115200, usb_vid=None, usb_pid=None,
-                              address=None, device=None)
+    args = argparse.Namespace(
+        transport="file",
+        mtu=None,
+        out=None,
+        dry_run=True,
+        port=None,
+        baud=115200,
+        usb_vid=None,
+        usb_pid=None,
+        address=None,
+        device=None,
+    )
     transport = cli._make_transport(args, printers.by_id("m110"))
     assert transport.max_write == cli.SIMULATED_MTU
     assert transport.pace is True
@@ -546,29 +571,38 @@ def test_missing_fields_abort_without_a_tty(tmp_path, monkeypatch):
 # --- template filters ------------------------------------------------------
 
 
-@pytest.mark.parametrize("template,expected", [
-    ("{{price|num}}", "49,5"),
-    ("{{price|num:2}}", "49,50"),
-    ("{{price|num:0}}", "50"),
-    ("{{whole|num}}", "35"),
-    ("{{name|upper}}", "BETA WIDGET"),
-    ("{{name|lower}}", "beta widget"),
-    ("{{sku|title}}", "Bw-1"),
-    ("{{name|truncate:8}}", "Beta Wi…"),
-    ("{{name|truncate:40}}", "Beta Widget"),
-    ("{{name|slug}}", "beta-widget"),
-    ("{{accented|slug}}", "creme-brulee"),
-    ("{{name|urlencode}}", "Beta%20Widget"),
-    ("{{batch|default:n/a}}", "n/a"),
-    ("{{sku|default:n/a}}", "BW-1"),
-    ("{{padded|trim}}", "spaces"),
-    ("{{sku|replace:-:_}}", "BW_1"),
-    ("{{name|truncate:8|upper}}", "BETA WI…"),          # pipelines chain
-])
+@pytest.mark.parametrize(
+    "template,expected",
+    [
+        ("{{price|num}}", "49,5"),
+        ("{{price|num:2}}", "49,50"),
+        ("{{price|num:0}}", "50"),
+        ("{{whole|num}}", "35"),
+        ("{{name|upper}}", "BETA WIDGET"),
+        ("{{name|lower}}", "beta widget"),
+        ("{{sku|title}}", "Bw-1"),
+        ("{{name|truncate:8}}", "Beta Wi…"),
+        ("{{name|truncate:40}}", "Beta Widget"),
+        ("{{name|slug}}", "beta-widget"),
+        ("{{accented|slug}}", "creme-brulee"),
+        ("{{name|urlencode}}", "Beta%20Widget"),
+        ("{{batch|default:n/a}}", "n/a"),
+        ("{{sku|default:n/a}}", "BW-1"),
+        ("{{padded|trim}}", "spaces"),
+        ("{{sku|replace:-:_}}", "BW_1"),
+        ("{{name|truncate:8|upper}}", "BETA WI…"),  # pipelines chain
+    ],
+)
 def test_filters(template, expected):
-    record = {"price": "49.50", "whole": "35.00", "name": "Beta Widget",
-              "sku": "BW-1", "batch": "", "accented": "Crème Brûlée",
-              "padded": "  spaces  "}
+    record = {
+        "price": "49.50",
+        "whole": "35.00",
+        "name": "Beta Widget",
+        "sku": "BW-1",
+        "batch": "",
+        "accented": "Crème Brûlée",
+        "padded": "  spaces  ",
+    }
     assert layout.substitute(template, record) == expected
 
 
@@ -585,7 +619,7 @@ def test_unknown_filter_fails_loudly():
     with pytest.raises(SystemExit) as exc:
         layout.substitute("{{p|nope}}", {"p": "x"})
     assert "unknown template filter" in str(exc.value)
-    assert "truncate" in str(exc.value)   # lists what is available
+    assert "truncate" in str(exc.value)  # lists what is available
 
 
 def test_filters_do_not_confuse_field_extraction():
@@ -601,10 +635,13 @@ def test_a_default_filter_means_the_field_is_never_missing():
 
 
 def test_filters_work_in_data_templates(csv_path):
-    rs = data.build_records(csv_path, data_entries=[
-        ("qr", "https://shop.example/{{name|slug}}#{{sku|lower}}"),
-        ("tag", "{{price|num}} EUR"),
-    ])
+    rs = data.build_records(
+        csv_path,
+        data_entries=[
+            ("qr", "https://shop.example/{{name|slug}}#{{sku|lower}}"),
+            ("tag", "{{price|num}} EUR"),
+        ],
+    )
     assert rs.records[0]["qr"] == "https://shop.example/alpha-gadget#ag-ex-0001"
     assert rs.records[0]["tag"] == "40 EUR"
 
@@ -632,8 +669,7 @@ def _brother_stream(media_id, compress=True, cut=True, model="ql-1110nwb"):
     m, img = _brother_image(media_id, model)
     printer = printers.by_id(model)
     opts = protocol.PrintOptions(media=m, compress=compress, cut=cut)
-    rst = protocol.prepare_raster(M.fit(img, m, printer.min_rows), printer, opts,
-                                  "threshold")
+    rst = protocol.prepare_raster(M.fit(img, m, printer.min_rows), printer, opts, "threshold")
     chunks: list[bytes] = []
     transport = FileTransport(path="-", max_write=1 << 20)
 
@@ -654,16 +690,24 @@ def test_packbits_matches_the_reference_encoder():
     cases = [b"", b"\x01", b"\x00" * 300, b"\xff" * 1000, bytes(range(60))]
     for _ in range(200):
         n = random.randint(1, 200)
-        cases.append(bytes(random.choice([0, 255, random.randint(0, 255)])
-                           for _ in range(n)))
+        cases.append(bytes(random.choice([0, 255, random.randint(0, 255)]) for _ in range(n)))
     for case in cases:
         assert protocol.packbits(case) == ref.encode(case), case[:32].hex(" ")
 
 
-@pytest.mark.parametrize("media_id,compress", [
-    ("102x152", True), ("102x152", False), ("62", True), ("102", True),
-    ("62x29", True), ("d58", True), ("29x90", False), ("103x164", True),
-])
+@pytest.mark.parametrize(
+    "media_id,compress",
+    [
+        ("102x152", True),
+        ("102x152", False),
+        ("62", True),
+        ("102", True),
+        ("62x29", True),
+        ("d58", True),
+        ("29x90", False),
+        ("103x164", True),
+    ],
+)
 def test_brother_stream_matches_brother_ql(media_id, compress):
     """Our byte stream must equal what brother_ql produces for the same image.
 
@@ -682,28 +726,37 @@ def test_brother_stream_matches_brother_ql(media_id, compress):
     img, ours = _brother_stream(media_id, compress=compress)
     qlr = BrotherQLRaster("QL-1110NWB")
     qlr.exception_on_warning = True
-    theirs = convert(qlr, [img], media_id, cut=True, compress=compress, dither=False,
-                     threshold=70, hq=True, rotate=0)
+    theirs = convert(
+        qlr,
+        [img],
+        media_id,
+        cut=True,
+        compress=compress,
+        dither=False,
+        threshold=70,
+        hq=True,
+        rotate=0,
+    )
     assert ours == theirs
 
 
 def test_brother_preamble_and_print_information():
     _, stream = _brother_stream("62x29")
-    assert stream.startswith(bytes([0x1B, 0x69, 0x61, 0x01]))    # switch to raster
-    assert bytes(200) in stream                                   # invalidate
-    assert bytes([0x1B, 0x40]) in stream                          # ESC @
-    assert bytes([0x1B, 0x69, 0x53]) in stream                    # status request
+    assert stream.startswith(bytes([0x1B, 0x69, 0x61, 0x01]))  # switch to raster
+    assert bytes(200) in stream  # invalidate
+    assert bytes([0x1B, 0x40]) in stream  # ESC @
+    assert bytes([0x1B, 0x69, 0x53]) in stream  # status request
     # ESC i z: flags, die-cut media, 62mm wide, 29mm long
     assert bytes([0x1B, 0x69, 0x7A, 0xCE, 0x0B, 62, 29]) in stream
-    assert bytes([0x1B, 0x69, 0x4D, 0x40]) in stream              # autocut on
-    assert stream.endswith(bytes([0x1A]))                         # print and eject
+    assert bytes([0x1B, 0x69, 0x4D, 0x40]) in stream  # autocut on
+    assert stream.endswith(bytes([0x1A]))  # print and eject
 
 
 def test_brother_continuous_media_reports_no_length():
     _, stream = _brother_stream("62")
     # Continuous media type 0x0A, and a length of zero.
     assert bytes([0x1B, 0x69, 0x7A, 0xCE, 0x0A, 62, 0]) in stream
-    assert bytes([0x1B, 0x69, 0x64, 35, 0]) in stream   # 35 dot feed margin
+    assert bytes([0x1B, 0x69, 0x64, 35, 0]) in stream  # 35 dot feed margin
 
 
 def test_brother_compression_command_only_when_compressing():
@@ -720,11 +773,11 @@ def test_brother_places_the_label_by_its_right_margin():
     printer = printers.by_id("ql-1110nwb")
     m = M.by_id("62x29")
     img = Image.new("RGB", m.dots_printable, "white")
-    img.putpixel((0, 0), (0, 0, 0))            # single dot, top-left of the label
+    img.putpixel((0, 0), (0, 0, 0))  # single dot, top-left of the label
     opts = protocol.PrintOptions(media=m)
     rst = protocol.prepare_raster(img, printer, opts, "threshold")
 
-    assert rst.width_bytes == 162              # 1296 dot head
+    assert rst.width_bytes == 162  # 1296 dot head
     # left = 1296 - 696 printable - (12 media + 44 model) = 544
     unpacked = R.to_image(rst)
     assert unpacked.getpixel((544, 0)) == 0
@@ -735,7 +788,7 @@ def test_place_uses_the_true_width_not_the_padded_one():
     # 1164 dots is not a whole number of bytes: the 4 padding dots must not
     # push the content left, which is exactly what a byte-wide raster would do.
     img = Image.new("RGB", (1164, 4), "white")
-    img.putpixel((1163, 0), (0, 0, 0))         # rightmost dot of the content
+    img.putpixel((1163, 0), (0, 0, 0))  # rightmost dot of the content
     rst = R.pack(img, "threshold")
     assert rst.width_bytes == 146 and rst.pixel_width == 1164
     placed = R.place(rst, 162, right_margin_dots=56)
@@ -748,15 +801,15 @@ def test_media_resolution_and_fitting():
     assert M.resolve(None, 102, 153, "ql-1110nwb").id == "102x152"
     assert M.resolve("62", 0, 0, "ql-1110nwb").id == "62"
     with pytest.raises(SystemExit):
-        M.resolve("102x152", 0, 0, "m110")      # wide media, narrow printer
+        M.resolve("102x152", 0, 0, "m110")  # wide media, narrow printer
     with pytest.raises(SystemExit):
         M.resolve("nonsense", 0, 0, "ql-1110nwb")
 
     m = M.by_id("102x152")
     fitted = M.fit(Image.new("RGB", (816, 1216), "white"), m)
-    assert fitted.size == m.dots_printable       # die-cut is exact
+    assert fitted.size == m.dots_printable  # die-cut is exact
 
     endless = M.by_id("62")
     fitted = M.fit(Image.new("RGB", (400, 100), "white"), endless, min_rows=301)
     assert fitted.width == endless.dots_printable[0]
-    assert fitted.height == 301                  # padded up to the minimum
+    assert fitted.height == 301  # padded up to the minimum

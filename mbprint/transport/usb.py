@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from mbprint.log import get_logger, hexdump, trace, tracing
 from mbprint.transport import Transport
@@ -25,8 +26,8 @@ class USBTransport(Transport):
         self.vid = vid
         self.pid = pid
         self.max_write = max_write
-        self._dev = None
-        self._ep_out = None
+        self._dev: Any = None
+        self._ep_out: Any = None
 
     async def open(self) -> None:
         try:
@@ -38,7 +39,7 @@ class USBTransport(Transport):
         candidates = [(self.vid, self.pid)] if self.vid else USB_IDS
         dev = None
         for vid, pid in candidates:
-            kw = {"idVendor": vid}
+            kw: dict[str, int] = {"idVendor": vid}
             if pid:
                 kw["idProduct"] = pid
             dev = usb.core.find(**kw)
@@ -57,14 +58,20 @@ class USBTransport(Transport):
         intf = cfg[(0, 0)]
         ep = usb.util.find_descriptor(
             intf,
-            custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
-            == usb.util.ENDPOINT_OUT,
+            custom_match=lambda e: (
+                usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
+            ),
         )
         if ep is None:
             raise SystemExit("no bulk OUT endpoint on the USB printer")
         self._dev, self._ep_out = dev, ep
-        log.info("USB %04x:%04x, bulk OUT 0x%02x, %d-byte packets",
-                 dev.idVendor, dev.idProduct, ep.bEndpointAddress, ep.wMaxPacketSize)
+        log.info(
+            "USB %04x:%04x, bulk OUT 0x%02x, %d-byte packets",
+            dev.idVendor,
+            dev.idProduct,
+            ep.bEndpointAddress,
+            ep.wMaxPacketSize,
+        )
         # Respect the endpoint's own packet size as the write ceiling.
         self.max_write = min(self.max_write, int(ep.wMaxPacketSize) or self.max_write)
 

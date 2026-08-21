@@ -9,6 +9,7 @@ so every model gets the largest safe payload its link supports.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from mbprint.log import get_logger, hexdump, trace, tracing
 from mbprint.transport import Transport
@@ -51,7 +52,7 @@ ATT_HEADER = 3
 FALLBACK_MTU = 23
 
 
-async def scan(timeout: float = 6.0):
+async def scan(timeout: float = 6.0) -> list[tuple[str, str]]:
     """Return [(address, name)] for every advertising BLE device."""
     from bleak import BleakScanner
 
@@ -62,21 +63,26 @@ async def scan(timeout: float = 6.0):
 class BLETransport(Transport):
     name = "ble"
 
-    def __init__(self, address: str | None = None, device_name: str | None = None,
-                 timeout: float = 20.0, max_write: int | None = None):
+    def __init__(
+        self,
+        address: str | None = None,
+        device_name: str | None = None,
+        timeout: float = 20.0,
+        max_write: int | None = None,
+    ):
         self.address = address
         self.device_name = device_name
         self.timeout = timeout
         self._forced_max_write = max_write
         self.max_write = FALLBACK_MTU - ATT_HEADER
-        self._client = None
-        self._write_char = None
-        self._notify_char = None
+        self._client: Any = None
+        self._write_char: Any = None
+        self._notify_char: Any = None
         self._write_with_response = False
-        self._notifications: asyncio.Queue | None = None
+        self._notifications: asyncio.Queue[bytes] | None = None
         self.resolved_name = device_name
 
-    async def _find_device(self):
+    async def _find_device(self) -> Any:
         from bleak import BleakScanner
 
         if self.address:
@@ -86,8 +92,11 @@ class BLETransport(Transport):
             return dev
         log.info("scanning for BLE devices (%.0fs)", min(self.timeout, 8.0))
         devices = await BleakScanner.discover(timeout=min(self.timeout, 8.0))
-        log.debug("found %d device(s): %s", len(devices),
-                  ", ".join(f"{d.address} {d.name or '(unnamed)'}" for d in devices))
+        log.debug(
+            "found %d device(s): %s",
+            len(devices),
+            ", ".join(f"{d.address} {d.name or '(unnamed)'}" for d in devices),
+        )
         wanted = (self.device_name or "").upper()
         for d in devices:
             nm = (d.name or "").upper()
@@ -123,9 +132,11 @@ class BLETransport(Transport):
                 break
         if service is None:
             log.debug("no known service UUID; searching every characteristic")
-        chars = list(service.characteristics) if service else [
-            c for s in client.services for c in s.characteristics
-        ]
+        chars = (
+            list(service.characteristics)
+            if service
+            else [c for s in client.services for c in s.characteristics]
+        )
 
         for c in chars:
             if c.uuid.lower() in WRITE_UUIDS and (
@@ -141,8 +152,12 @@ class BLETransport(Transport):
         if self._write_char is None:
             raise SystemExit("no writable characteristic on this device")
         self._write_with_response = "write-without-response" not in self._write_char.properties
-        log.debug("write characteristic %s %s (response=%s)", self._write_char.uuid,
-                  sorted(self._write_char.properties), self._write_with_response)
+        log.debug(
+            "write characteristic %s %s (response=%s)",
+            self._write_char.uuid,
+            sorted(self._write_char.properties),
+            self._write_with_response,
+        )
 
         for c in chars:
             if c.uuid.lower() in NOTIFY_UUIDS and "notify" in c.properties:
@@ -170,13 +185,19 @@ class BLETransport(Transport):
                 log.debug("could not acquire MTU (%s); keeping the default", exc)
         negotiated = max(20, int(mtu) - ATT_HEADER)
         self.max_write = min(self._forced_max_write or negotiated, negotiated)
-        log.info("connected to %s: ATT MTU %d, %d-byte writes",
-                 self.resolved_name or self.address, mtu, self.max_write)
+        log.info(
+            "connected to %s: ATT MTU %d, %d-byte writes",
+            self.resolved_name or self.address,
+            mtu,
+            self.max_write,
+        )
         if self.max_write <= 20:
-            log.warning("link MTU was not negotiated: 20-byte writes make printing "
-                        "roughly six times slower than normal")
+            log.warning(
+                "link MTU was not negotiated: 20-byte writes make printing "
+                "roughly six times slower than normal"
+            )
 
-    def _on_notify(self, _char, data: bytearray) -> None:
+    def _on_notify(self, _char: Any, data: bytearray) -> None:
         trace(log, "<- notify: %s", hexdump(bytes(data)))
         if self._notifications is not None:
             self._notifications.put_nowait(bytes(data))

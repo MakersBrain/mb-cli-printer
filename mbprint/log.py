@@ -71,8 +71,9 @@ def _console_handler(verbosity: int, plain: bool) -> logging.Handler:
             log_time_format="[%H:%M:%S]",
         )
         handler.addFilter(_ShortName())
-        handler.setFormatter(logging.Formatter(
-            "%(shortname)-10s %(message)s" if verbosity else "%(message)s"))
+        handler.setFormatter(
+            logging.Formatter("%(shortname)-10s %(message)s" if verbosity else "%(message)s")
+        )
         return handler
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(_Formatter(verbose=verbosity > 0))
@@ -98,8 +99,9 @@ class _Formatter(logging.Formatter):
         return f"{record.levelname:<7} {name:<18} {message}"
 
 
-def configure(verbosity: int = 0, quiet: bool = False, log_file: str | None = None,
-              plain: bool = False) -> None:
+def configure(
+    verbosity: int = 0, quiet: bool = False, log_file: str | None = None, plain: bool = False
+) -> None:
     """Set up the mbprint logger. Called once, from the CLI.
 
     With rich installed and a terminal attached, log lines are colored by level
@@ -127,9 +129,7 @@ def configure(verbosity: int = 0, quiet: bool = False, log_file: str | None = No
         # The file always gets the full trace, whatever the console shows.
         handler = logging.FileHandler(log_file, encoding="utf-8")
         handler.setLevel(TRACE)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-7s %(name)s %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s %(message)s"))
         root.setLevel(min(level, TRACE))
         root.addHandler(handler)
 

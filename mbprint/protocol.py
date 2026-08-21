@@ -16,8 +16,8 @@ Every data write is chunked to min(protocol chunk, transport MTU payload).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from mbprint import media as mediamod
 from mbprint import raster as R
@@ -36,15 +36,14 @@ async def _cmd(transport: Transport, name: str, data: bytes) -> None:
     await transport.send(data)
 
 
-
 @dataclass
 class PrintOptions:
-    density: int = 6           # 1-8, mapped per protocol
-    feed: int = 32             # dots fed after the label
-    continuous: bool = False   # continuous media: disable gap detection
-    speed: int = 5             # m110 / tspl print speed
+    density: int = 6  # 1-8, mapped per protocol
+    feed: int = 32  # dots fed after the label
+    continuous: bool = False  # continuous media: disable gap detection
+    speed: int = 5  # m110 / tspl print speed
     copies: int = 1
-    gap_mm: float = 3.0        # tspl gap between die-cut labels
+    gap_mm: float = 3.0  # tspl gap between die-cut labels
     tspl_offset_mm: float = -3.0  # tspl roller alignment (negative shifts down)
     chunk_delay_ms: int | None = None  # override inter-chunk pacing
     # Roller alignment, in head space (applied after any protocol rotation).
@@ -55,7 +54,7 @@ class PrintOptions:
     label_width_mm: float | None = None
     label_height_mm: float | None = None
     # Brother: which DK roll is loaded, and how to finish the job.
-    media: "mediamod.Media | None" = None
+    media: mediamod.Media | None = None
     cut: bool = True
     cut_every: int = 1
     compress: bool = True
@@ -73,14 +72,14 @@ def density_to_heat_time(density: int) -> int:
 
 # --- command builders ------------------------------------------------------
 
-INIT = bytes([0x1B, 0x40])                       # ESC @
+INIT = bytes([0x1B, 0x40])  # ESC @
 
 
-def feed_cmd(dots: int) -> bytes:                 # ESC J n
+def feed_cmd(dots: int) -> bytes:  # ESC J n
     return bytes([0x1B, 0x4A, dots & 0xFF])
 
 
-def density_cmd(level: int) -> bytes:             # GS | n
+def density_cmd(level: int) -> bytes:  # GS | n
     return bytes([0x1D, 0x7C, level & 0xFF])
 
 
@@ -88,32 +87,39 @@ def heat_settings(max_dots: int, heat_time: int, heat_interval: int) -> bytes:
     return bytes([0x1B, 0x37, max_dots & 0xFF, heat_time & 0xFF, heat_interval & 0xFF])
 
 
-def line_spacing(dots: int) -> bytes:             # ESC 3 n
+def line_spacing(dots: int) -> bytes:  # ESC 3 n
     return bytes([0x1B, 0x33, dots & 0xFF])
 
 
 def raster_header(width_bytes: int, height: int) -> bytes:  # GS v 0
-    return bytes([
-        0x1D, 0x76, 0x30, 0x00,
-        width_bytes % 256, width_bytes // 256,
-        height % 256, height // 256,
-    ])
+    return bytes(
+        [
+            0x1D,
+            0x76,
+            0x30,
+            0x00,
+            width_bytes % 256,
+            width_bytes // 256,
+            height % 256,
+            height // 256,
+        ]
+    )
 
 
-def media_type(kind: int) -> bytes:               # 1F 11 0A gaps / 0B continuous
+def media_type(kind: int) -> bytes:  # 1F 11 0A gaps / 0B continuous
     return bytes([0x1F, 0x11, kind & 0xFF])
 
 
 M02_PREFIX = bytes([0x10, 0xFF, 0xFE, 0x01])
 
-D_END = bytes([0x1B, 0x64, 0x00])                 # print, no feed (gap detect)
+D_END = bytes([0x1B, 0x64, 0x00])  # print, no feed (gap detect)
 
-M110_SPEED = lambda s: bytes([0x1B, 0x4E, 0x0D, s & 0xFF])       # noqa: E731
-M110_DENSITY = lambda d: bytes([0x1B, 0x4E, 0x04, d & 0xFF])     # noqa: E731
+M110_SPEED = lambda s: bytes([0x1B, 0x4E, 0x0D, s & 0xFF])  # noqa: E731
+M110_DENSITY = lambda d: bytes([0x1B, 0x4E, 0x04, d & 0xFF])  # noqa: E731
 M110_FOOTER = bytes([0x1F, 0xF0, 0x05, 0x00, 0x1F, 0xF0, 0x03, 0x00])
 
-M04_DENSITY = lambda d: bytes([0x1F, 0x11, 0x02, d & 0xFF])      # noqa: E731
-M04_HEAT = lambda p: bytes([0x1F, 0x11, 0x37, p & 0xFF])         # noqa: E731
+M04_DENSITY = lambda d: bytes([0x1F, 0x11, 0x02, d & 0xFF])  # noqa: E731
+M04_HEAT = lambda p: bytes([0x1F, 0x11, 0x37, p & 0xFF])  # noqa: E731
 M04_INIT = bytes([0x1F, 0x11, 0x0B])
 M04_COMPRESSION = lambda m: bytes([0x1F, 0x11, 0x35, m & 0xFF])  # noqa: E731
 M04_FEED = bytes([0x1B, 0x64, 0x02])
@@ -134,48 +140,122 @@ D_CUTTER_OFFSET = 56
 
 # --- Brother QL raster language (ESC/P) -----------------------------------
 
-BROTHER_SWITCH_RASTER = bytes([0x1B, 0x69, 0x61, 0x01])   # ESC i a 1
-BROTHER_STATUS = bytes([0x1B, 0x69, 0x53])                # ESC i S
+BROTHER_SWITCH_RASTER = bytes([0x1B, 0x69, 0x61, 0x01])  # ESC i a 1
+BROTHER_STATUS = bytes([0x1B, 0x69, 0x53])  # ESC i S
 
 
-def brother_print_information(media: "mediamod.Media", rows: int, page: int,
-                              high_quality: bool = True) -> bytes:
+def brother_print_information(
+    media: mediamod.Media, rows: int, page: int, high_quality: bool = True
+) -> bytes:
     """ESC i z: media type, width, length and how many raster lines follow."""
     flags = 0x80 | (1 << 1) | (1 << 2) | (1 << 3) | (int(high_quality) << 6)
     length_mm = 0 if media.continuous else int(media.length_mm)
     return (
-        bytes([0x1B, 0x69, 0x7A, flags,
-               mediamod.MEDIA_TYPE_BYTE[media.form] & 0xFF,
-               int(media.width_mm) & 0xFF, length_mm & 0xFF])
+        bytes(
+            [
+                0x1B,
+                0x69,
+                0x7A,
+                flags,
+                mediamod.MEDIA_TYPE_BYTE[media.form] & 0xFF,
+                int(media.width_mm) & 0xFF,
+                length_mm & 0xFF,
+            ]
+        )
         + rows.to_bytes(4, "little")
         + bytes([0 if page == 0 else 1, 0x00])
     )
 
 
-def brother_autocut(enabled: bool) -> bytes:                 # ESC i M
+# 32-byte status block the printer returns for ESC i S and after each page.
+BROTHER_ERRORS_1 = {
+    0: "no media",
+    1: "end of media",
+    2: "cutter jam",
+    4: "unit in use",
+    5: "printer off",
+    7: "fan failure",
+}
+BROTHER_ERRORS_2 = {
+    0: "replace media",
+    1: "expansion buffer full",
+    2: "transmission error",
+    4: "cover opened while printing",
+    6: "media cannot be fed",
+    7: "system error",
+}
+BROTHER_MEDIA_TYPES = {0x00: "no media", 0x0A: "continuous", 0x0B: "die-cut"}
+BROTHER_STATUS_TYPES = {
+    0x00: "reply to status request",
+    0x01: "printing completed",
+    0x02: "error",
+    0x05: "notification",
+    0x06: "phase change",
+}
+BROTHER_PHASES = {0x00: "waiting to receive", 0x01: "printing"}
+
+
+def brother_parse_status(data: bytes) -> dict:
+    """Decode the 32-byte status block: loaded media, phase and errors."""
+    if not data or len(data) < 32:
+        raise SystemExit(
+            f"short status reply from the printer ({len(data or b'')} bytes); expected 32"
+        )
+    if not data.startswith(bytes([0x80, 0x20, 0x42])):
+        raise SystemExit(f"unexpected status header: {data[:4].hex(' ')}")
+    errors = [name for bit, name in BROTHER_ERRORS_1.items() if data[8] & (1 << bit)]
+    errors += [name for bit, name in BROTHER_ERRORS_2.items() if data[9] & (1 << bit)]
+    return {
+        "media_width_mm": data[10],
+        "media_length_mm": data[17],
+        "media_type": BROTHER_MEDIA_TYPES.get(data[11], f"unknown 0x{data[11]:02x}"),
+        "status_type": BROTHER_STATUS_TYPES.get(data[18], f"unknown 0x{data[18]:02x}"),
+        "phase": BROTHER_PHASES.get(data[19], f"unknown 0x{data[19]:02x}"),
+        "errors": errors,
+    }
+
+
+async def brother_query_status(
+    transport: Transport, printer: PrinterDef, timeout_ms: int = 3000
+) -> dict:
+    """Ask a QL what media is loaded and whether it is happy."""
+    await _cmd(transport, "invalidate", bytes(printer.invalidate_bytes))
+    await _cmd(transport, "ESC @ init", INIT)
+    # The printer only answers status requests once it is in raster mode.
+    await _cmd(transport, "switch to raster mode", BROTHER_SWITCH_RASTER)
+    await _cmd(transport, "ESC i S status request", BROTHER_STATUS)
+    reply = await transport.wait_for_response(timeout_ms)
+    log.debug("<- status: %s", hexdump(reply or b"", 32))
+    if not reply:
+        return None
+    return brother_parse_status(reply)
+
+
+def brother_autocut(enabled: bool) -> bytes:  # ESC i M
     return bytes([0x1B, 0x69, 0x4D, (int(enabled) << 6) & 0xFF])
 
 
-def brother_cut_every(n: int) -> bytes:                      # ESC i A
+def brother_cut_every(n: int) -> bytes:  # ESC i A
     return bytes([0x1B, 0x69, 0x41, n & 0xFF])
 
 
-def brother_expanded_mode(cut_at_end: bool, dpi_600: bool = False,
-                          two_color: bool = False) -> bytes:  # ESC i K
+def brother_expanded_mode(
+    cut_at_end: bool, dpi_600: bool = False, two_color: bool = False
+) -> bytes:  # ESC i K
     flags = (int(two_color) << 0) | (int(cut_at_end) << 3) | (int(dpi_600) << 6)
     return bytes([0x1B, 0x69, 0x4B, flags & 0xFF])
 
 
-def brother_margins(dots: int) -> bytes:                     # ESC i d
+def brother_margins(dots: int) -> bytes:  # ESC i d
     return bytes([0x1B, 0x69, 0x64]) + (dots & 0xFFFF).to_bytes(2, "little")
 
 
-def brother_compression(enabled: bool) -> bytes:             # M
+def brother_compression(enabled: bool) -> bytes:  # M
     return bytes([0x4D, (int(enabled) << 1) & 0xFF])
 
 
-BROTHER_PRINT_LAST = bytes([0x1A])   # print and eject
-BROTHER_PRINT_PAGE = bytes([0x0C])   # print, more pages follow
+BROTHER_PRINT_LAST = bytes([0x1A])  # print and eject
+BROTHER_PRINT_PAGE = bytes([0x0C])  # print, more pages follow
 
 
 def packbits(data: bytes) -> bytes:
@@ -242,7 +322,7 @@ def brother_raster_lines(rst: R.Raster, compress: bool) -> bytes:
     out = bytearray()
     width = rst.width_bytes
     for y in range(rst.height):
-        row = bytes(mirrored.data[y * width:(y + 1) * width])
+        row = bytes(mirrored.data[y * width : (y + 1) * width])
         if compress:
             row = packbits(row)
         out += bytes([0x67, 0x00, len(row)]) + row
@@ -273,8 +353,11 @@ async def _print_brother(transport, printer, rst, opts, on_progress):
     await _cmd(transport, "switch to raster mode", BROTHER_SWITCH_RASTER)
 
     await _cmd(transport, "ESC i S status request", BROTHER_STATUS)
-    await _cmd(transport, "ESC i z print information",
-               brother_print_information(media, rst.height, 0, opts.high_quality))
+    await _cmd(
+        transport,
+        "ESC i z print information",
+        brother_print_information(media, rst.height, 0, opts.high_quality),
+    )
     if opts.cut:
         await _cmd(transport, "ESC i M autocut", brother_autocut(True))
         await _cmd(transport, "ESC i A cut every", brother_cut_every(opts.cut_every))
@@ -283,10 +366,13 @@ async def _print_brother(transport, printer, rst, opts, on_progress):
     if compress:
         await _cmd(transport, "M compression", brother_compression(True))
 
-    log.debug("-> %d raster lines of %d bytes%s",
-              rst.height, rst.width_bytes, ", packbits" if compress else "")
-    await _send_data(transport, printer, brother_raster_lines(rst, compress),
-                     opts, on_progress)
+    log.debug(
+        "-> %d raster lines of %d bytes%s",
+        rst.height,
+        rst.width_bytes,
+        ", packbits" if compress else "",
+    )
+    await _send_data(transport, printer, brother_raster_lines(rst, compress), opts, on_progress)
     await _cmd(transport, "print", BROTHER_PRINT_LAST)
 
 
@@ -302,16 +388,22 @@ def effective_chunk(printer: PrinterDef, transport: Transport) -> int:
     return max(1, min(printer.chunk_size, transport.max_write))
 
 
-async def _send_data(transport: Transport, printer: PrinterDef, data: bytes,
-                     opts: PrintOptions, on_progress: ProgressFn) -> None:
+async def _send_data(
+    transport: Transport,
+    printer: PrinterDef,
+    data: bytes,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     chunk = effective_chunk(printer, transport)
     delay = printer.chunk_delay_ms if opts.chunk_delay_ms is None else opts.chunk_delay_ms
     total = len(data)
     count = (total + chunk - 1) // chunk
-    log.debug("-> raster payload: %d bytes in %d chunks of %d, %dms apart",
-              total, count, chunk, delay)
+    log.debug(
+        "-> raster payload: %d bytes in %d chunks of %d, %dms apart", total, count, chunk, delay
+    )
     for index, i in enumerate(range(0, total, chunk), 1):
-        piece = data[i:i + chunk]
+        piece = data[i : i + chunk]
         if tracing(log):
             trace(log, "-> chunk %d/%d @%d: %s", index, count, i, hexdump(piece))
         await transport.send(piece)
@@ -394,7 +486,11 @@ async def _print_d_series(transport, printer, rst, opts, on_progress):
     await transport.delay(30)
     await _cmd(transport, "media type", media_type(0x0B if opts.continuous else 0x0A))
     await transport.delay(30)
-    await _cmd(transport, "ESC @ init + GS v 0 raster header", INIT + raster_header(rot.width_bytes, rot.height))
+    await _cmd(
+        transport,
+        "ESC @ init + GS v 0 raster header",
+        INIT + raster_header(rot.width_bytes, rot.height),
+    )
     await _send_data(transport, printer, rot.data, opts, on_progress)
     await transport.delay(100)
     await _cmd(transport, "ESC d 0 print + gap detect", D_END)
@@ -405,7 +501,11 @@ async def _print_p12(transport, printer, rst, opts, on_progress):
     for cmd in P12_INIT_SEQUENCE:
         await _cmd(transport, "P12 init packet", cmd)
         await transport.wait_for_response(500)
-    await _cmd(transport, "ESC @ init + GS v 0 raster header", INIT + raster_header(rot.width_bytes, rot.height))
+    await _cmd(
+        transport,
+        "ESC @ init + GS v 0 raster header",
+        INIT + raster_header(rot.width_bytes, rot.height),
+    )
     await _send_data(transport, printer, rot.data, opts, on_progress)
     await transport.delay(100)
     await _cmd(transport, "P12 feed", P12_FEED)
@@ -432,9 +532,7 @@ async def _print_tspl(transport, printer, rst, opts, on_progress):
     await _cmd(transport, "TSPL", tspl("CLS"))
     await transport.delay(50)
     bx, by = max(0, opts.offset_x), max(0, opts.offset_y)
-    await transport.send(
-        f"BITMAP {bx},{by},{rst.width_bytes},{rst.height},0,".encode("ascii")
-    )
+    await transport.send(f"BITMAP {bx},{by},{rst.width_bytes},{rst.height},0,".encode("ascii"))
     # TSPL BITMAP is 0 = black, the inverse of the ESC/POS raster convention.
     inverted = bytes(b ^ 0xFF for b in rst.data)
     await _send_data(transport, printer, inverted, opts, on_progress)
@@ -457,8 +555,9 @@ _FLOWS = {
 }
 
 
-def prepare_raster(img, printer: PrinterDef, opts: PrintOptions | None = None,
-                    dither: str = "auto") -> R.Raster:
+def prepare_raster(
+    img, printer: PrinterDef, opts: PrintOptions | None = None, dither: str = "auto"
+) -> R.Raster:
     """Turn a rendered label image into the exact raster the printer receives.
 
     Rotated models (D-series, P12 tape) print sideways, so the label is rotated
@@ -478,16 +577,19 @@ def prepare_raster(img, printer: PrinterDef, opts: PrintOptions | None = None,
             raise SystemExit("the Brother protocol needs to know the media; pass --media")
         margin = media.offset_r + printer.additional_offset_r + opts.offset_x
         placed = R.place(rst, printer.width_bytes, margin)
-        log.debug("placed on %s: %d dots from the right edge (%d media + %d model"
-                  "%s), head %d dots", media.name, margin, media.offset_r,
-                  printer.additional_offset_r,
-                  f" + {opts.offset_x} offset" if opts.offset_x else "",
-                  placed.width_px)
+        log.debug(
+            "placed on %s: %d dots from the right edge (%d media + %d model%s), head %d dots",
+            media.name,
+            margin,
+            media.offset_r,
+            printer.additional_offset_r,
+            f" + {opts.offset_x} offset" if opts.offset_x else "",
+            placed.width_px,
+        )
         return placed
     if printer.rotated:
         rst = R.rotate_cw(rst)
-        log.debug("rotated 90 CW for %s: now %dx%d dots",
-                  printer.id, rst.width_px, rst.height)
+        log.debug("rotated 90 CW for %s: now %dx%d dots", printer.id, rst.width_px, rst.height)
     if printer.protocol == "tspl":
         log.debug("tspl places the bitmap itself, keeping the raw raster")
         return rst
@@ -499,14 +601,24 @@ def prepare_raster(img, printer: PrinterDef, opts: PrintOptions | None = None,
             f"is {label_mm:g}mm along that axis; use a shorter label or a wider model"
         )
     fitted = R.fit(rst, printer.width_bytes, opts.align, opts.offset_x, opts.offset_y)
-    log.debug("fitted to head: %dx%d dots, align=%s offset=(%d,%d)",
-              fitted.width_px, fitted.height, opts.align, opts.offset_x, opts.offset_y)
+    log.debug(
+        "fitted to head: %dx%d dots, align=%s offset=(%d,%d)",
+        fitted.width_px,
+        fitted.height,
+        opts.align,
+        opts.offset_x,
+        opts.offset_y,
+    )
     return fitted
 
 
-async def print_raster(transport: Transport, printer: PrinterDef, rst: R.Raster,
-                       opts: PrintOptions | None = None,
-                       on_progress: ProgressFn = None) -> None:
+async def print_raster(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions | None = None,
+    on_progress: ProgressFn = None,
+) -> None:
     """Send one raster to the printer using its protocol flow."""
     opts = opts or PrintOptions()
     flow = _FLOWS.get(printer.protocol)
@@ -514,9 +626,17 @@ async def print_raster(transport: Transport, printer: PrinterDef, rst: R.Raster,
         raise SystemExit(f"unsupported protocol {printer.protocol!r}")
     # TSPL sends its own copy count; every other protocol repeats the raster.
     repeats = 1 if printer.protocol == "tspl" else opts.copies
-    log.debug("%s flow: %dx%d dots (%d bytes), density=%d feed=%d continuous=%s copies=%d",
-              printer.protocol, rst.width_px, rst.height, len(rst.data),
-              opts.density, opts.feed, opts.continuous, repeats)
+    log.debug(
+        "%s flow: %dx%d dots (%d bytes), density=%d feed=%d continuous=%s copies=%d",
+        printer.protocol,
+        rst.width_px,
+        rst.height,
+        len(rst.data),
+        opts.density,
+        opts.feed,
+        opts.continuous,
+        repeats,
+    )
     for copy in range(max(1, repeats)):
         if repeats > 1:
             log.debug("copy %d/%d", copy + 1, repeats)
@@ -537,7 +657,9 @@ async def print_density_test(transport: Transport, printer: PrinterDef) -> None:
         await transport.delay(30)
         await _cmd(transport, "GS | density", density_cmd(density))
         await transport.delay(30)
-        await _cmd(transport, "GS v 0 raster header", raster_header(strip_width_bytes, strip_height))
+        await _cmd(
+            transport, "GS v 0 raster header", raster_header(strip_width_bytes, strip_height)
+        )
         await _send_data(transport, printer, strip, opts, None)
         if density < 8:
             await transport.delay(200)

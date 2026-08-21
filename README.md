@@ -412,6 +412,17 @@ Three things differ from the Phomemo families:
 
 Finishing: `--no-cut` leaves the labels joined, `--cut-every N` cuts every Nth.
 
+`mbprint status --model ql-1110nwb -t tcp --host IP` asks the printer what roll
+is loaded and whether it has any errors. Networked QLs usually accept jobs on
+port 9100 but answer status only over USB or Bluetooth; when nothing comes back
+mbprint says so and asks you to name the roll with `--media`.
+
+Find one on the network without knowing its address:
+
+```sh
+avahi-browse -rtp _pdl-datastream._tcp | grep -i QL-
+```
+
 Verification without hardware: our byte stream is compared against the
 `brother_ql` project's output for the same image, byte for byte, across eight
 media and compression combinations — including the rolls whose printable width

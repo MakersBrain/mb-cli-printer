@@ -28,8 +28,14 @@ def _prepare(images: list[Image.Image], bilevel: bool, dither: str) -> list[Imag
     return [to_bilevel(img, dither).convert("RGB") for img in images]
 
 
-def write_labels(images: list[Image.Image], out_path: str | Path, dots_per_mm: float = 8.0,
-                 bilevel: bool = False, dither: str = "auto", title: str = "") -> Path:
+def write_labels(
+    images: list[Image.Image],
+    out_path: str | Path,
+    dots_per_mm: float = 8.0,
+    bilevel: bool = False,
+    dither: str = "auto",
+    title: str = "",
+) -> Path:
     """One page per label, page size exactly the label size."""
     if not images:
         raise SystemExit("nothing to write: no labels")
@@ -43,11 +49,20 @@ def write_labels(images: list[Image.Image], out_path: str | Path, dots_per_mm: f
     return out
 
 
-def write_sheet(images: list[Image.Image], out_path: str | Path, dots_per_mm: float = 8.0,
-                page: str = "a4", margin_mm: float = 10.0, gap_mm: float = 2.0,
-                columns: int | None = None, rows: int | None = None,
-                marks: bool = True, bilevel: bool = False, dither: str = "auto",
-                title: str = "") -> Path:
+def write_sheet(
+    images: list[Image.Image],
+    out_path: str | Path,
+    dots_per_mm: float = 8.0,
+    page: str = "a4",
+    margin_mm: float = 10.0,
+    gap_mm: float = 2.0,
+    columns: int | None = None,
+    rows: int | None = None,
+    marks: bool = True,
+    bilevel: bool = False,
+    dither: str = "auto",
+    title: str = "",
+) -> Path:
     """Tile labels onto sheets of paper, with optional cut marks."""
     if not images:
         raise SystemExit("nothing to write: no labels")
@@ -77,7 +92,7 @@ def write_sheet(images: list[Image.Image], out_path: str | Path, dots_per_mm: fl
     for start in range(0, len(prepared), per_page):
         sheet = Image.new("RGB", (page_w, page_h), "white")
         draw = ImageDraw.Draw(sheet)
-        for slot, img in enumerate(prepared[start:start + per_page]):
+        for slot, img in enumerate(prepared[start : start + per_page]):
             col, row = slot % cols, slot // cols
             x = margin + col * (lw + gap)
             y = margin + row * (lh + gap)
@@ -89,7 +104,11 @@ def write_sheet(images: list[Image.Image], out_path: str | Path, dots_per_mm: fl
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     pages[0].save(
-        out, "PDF", resolution=_dpi(dots_per_mm), save_all=True,
-        append_images=pages[1:], title=title or None,
+        out,
+        "PDF",
+        resolution=_dpi(dots_per_mm),
+        save_all=True,
+        append_images=pages[1:],
+        title=title or None,
     )
     return out

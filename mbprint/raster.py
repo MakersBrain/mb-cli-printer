@@ -48,7 +48,7 @@ def _to_gray(img: Image.Image, gamma: float = 1.3):
     gray = img.convert("L")
     if gamma and gamma != 1.0:
         inv = 1.0 / gamma
-        lut = [min(255, int(round(255.0 * ((i / 255.0) ** inv)))) for i in range(256)]
+        lut = [min(255, round(255.0 * ((i / 255.0) ** inv))) for i in range(256)]
         gray = gray.point(lut)
     return gray
 
@@ -104,8 +104,10 @@ def to_bilevel(img: Image.Image, dither: str = "auto") -> Image.Image:
     if dither not in DITHER_MODES:
         raise SystemExit(f"unknown dither mode {dither!r}; use one of {DITHER_MODES}")
     if dither in ("none", "threshold"):
-        return _to_gray(img, gamma=1.0).point(lambda v: 255 if v >= 128 else 0).convert(
-            "1", dither=Image.Dither.NONE
+        return (
+            _to_gray(img, gamma=1.0)
+            .point(lambda v: 255 if v >= 128 else 0)
+            .convert("1", dither=Image.Dither.NONE)
         )
     gray = _to_gray(img)
     if dither == "atkinson":
@@ -116,8 +118,10 @@ def to_bilevel(img: Image.Image, dither: str = "auto") -> Image.Image:
         return _floyd_steinberg(gray)
     if _looks_like_photo(gray):
         return _floyd_steinberg(gray)
-    return _to_gray(img, gamma=1.0).point(lambda v: 255 if v >= 128 else 0).convert(
-        "1", dither=Image.Dither.NONE
+    return (
+        _to_gray(img, gamma=1.0)
+        .point(lambda v: 255 if v >= 128 else 0)
+        .convert("1", dither=Image.Dither.NONE)
     )
 
 
@@ -136,8 +140,13 @@ def pack(img: Image.Image, dither: str = "auto") -> Raster:
     return Raster(data=data, width_bytes=width_bytes, height=h, content_width=w)
 
 
-def fit(raster: Raster, width_bytes: int | None = None, alignment: str = "center",
-        offset_x: int = 0, offset_y: int = 0) -> Raster:
+def fit(
+    raster: Raster,
+    width_bytes: int | None = None,
+    alignment: str = "center",
+    offset_x: int = 0,
+    offset_y: int = 0,
+) -> Raster:
     """Place a raster inside the print head width.
 
     `alignment` is where the label sits under the head; `offset_x` / `offset_y`

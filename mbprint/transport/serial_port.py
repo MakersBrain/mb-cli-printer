@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from mbprint.log import get_logger, hexdump, trace, tracing
 from mbprint.transport import Transport
@@ -17,7 +18,7 @@ class SerialTransport(Transport):
         self.port = port
         self.baudrate = baudrate
         self.max_write = max_write
-        self._ser = None
+        self._ser: Any = None
 
     async def open(self) -> None:
         try:
@@ -26,8 +27,9 @@ class SerialTransport(Transport):
             raise SystemExit("serial transport needs pyserial: pip install pyserial")
         try:
             self._ser = serial.Serial(self.port, self.baudrate, timeout=1, write_timeout=10)
-            log.info("opened %s at %d baud, %d-byte writes",
-                     self.port, self.baudrate, self.max_write)
+            log.info(
+                "opened %s at %d baud, %d-byte writes", self.port, self.baudrate, self.max_write
+            )
         except Exception as exc:
             raise SystemExit(f"cannot open {self.port}: {exc}")
 

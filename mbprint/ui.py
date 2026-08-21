@@ -97,8 +97,12 @@ class PlainProgress(Progress):
         if percent - self._last < 5 and percent < 100:
             return
         self._last = percent
-        print(f"\r[{self._index}/{self._total}] {self._name}: {percent:3d}%",
-              end="", file=sys.stderr, flush=True)
+        print(
+            f"\r[{self._index}/{self._total}] {self._name}: {percent:3d}%",
+            end="",
+            file=sys.stderr,
+            flush=True,
+        )
 
     def finish_label(self) -> None:
         print(f"\r[{self._index}/{self._total}] {self._name}: done      ", file=sys.stderr)
@@ -122,8 +126,8 @@ class RichProgress(Progress):
     """Two bars: labels completed overall, and bytes sent for the current label."""
 
     def __init__(self, total: int, plain: bool = False):
-        from rich.progress import (BarColumn, Progress as RProgress, SpinnerColumn,
-                                   TextColumn, TimeRemainingColumn)
+        from rich.progress import BarColumn, SpinnerColumn, TextColumn, TimeRemainingColumn
+        from rich.progress import Progress as RProgress
 
         self._total = total
         self._progress = RProgress(
@@ -141,8 +145,7 @@ class RichProgress(Progress):
     def start(self) -> None:
         self._progress.start()
         self._labels = self._progress.add_task("labels", total=self._total, unit="count")
-        self._current = self._progress.add_task(
-            "waiting", total=100, visible=False, unit="percent")
+        self._current = self._progress.add_task("waiting", total=100, visible=False, unit="percent")
 
     def label(self, index: int, total: int, name: str) -> None:
         self._progress.update(self._current, description=name, completed=0, visible=True)

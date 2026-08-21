@@ -25,13 +25,13 @@ WIDE_MODELS = ["ql-1050", "ql-1060n", "ql-1100", "ql-1110nwb", "ql-1115nwb"]
 class Media:
     id: str
     width_mm: float
-    length_mm: float          # 0 for continuous rolls
+    length_mm: float  # 0 for continuous rolls
     form: str
     dots_total: tuple[int, int]
     dots_printable: tuple[int, int]
-    offset_r: int             # dots of margin on the right, to centre the print
+    offset_r: int  # dots of margin on the right, to centre the print
     feed_margin: int = 0
-    models: tuple[str, ...] = ()   # empty means every model
+    models: tuple[str, ...] = ()  # empty means every model
 
     @property
     def continuous(self) -> bool:
@@ -71,8 +71,9 @@ ALL_MEDIA: tuple[Media, ...] = (
     Media("62x100", 62, 100, DIE_CUT, (732, 1179), (696, 1109), 12),
     Media("102x51", 102, 51, DIE_CUT, (1200, 596), (1164, 526), 12, 0, tuple(WIDE_MODELS)),
     Media("102x152", 102, 153, DIE_CUT, (1200, 1804), (1164, 1660), 12, 0, tuple(WIDE_MODELS)),
-    Media("103x164", 104, 164, DIE_CUT, (1224, 1941), (1200, 1822), 12, 0,
-          ("ql-1100", "ql-1110nwb")),
+    Media(
+        "103x164", 104, 164, DIE_CUT, (1224, 1941), (1200, 1822), 12, 0, ("ql-1100", "ql-1110nwb")
+    ),
     Media("d12", 12, 12, ROUND_DIE_CUT, (142, 142), (94, 94), 113, 35),
     Media("d24", 24, 24, ROUND_DIE_CUT, (284, 284), (236, 236), 42),
     Media("d58", 58, 58, ROUND_DIE_CUT, (688, 688), (618, 618), 51),
@@ -93,8 +94,9 @@ def for_printer(printer_id: str) -> list[Media]:
     return [m for m in ALL_MEDIA if m.works_with(printer_id)]
 
 
-def match_size(width_mm: float, height_mm: float, printer_id: str,
-               tolerance: float = 1.5) -> Media | None:
+def match_size(
+    width_mm: float, height_mm: float, printer_id: str, tolerance: float = 1.5
+) -> Media | None:
     """Find the media a label of this size is meant for.
 
     Die-cut rolls must match both dimensions; a continuous roll only needs the
@@ -115,8 +117,9 @@ def match_size(width_mm: float, height_mm: float, printer_id: str,
     return best[1] if best else None
 
 
-def resolve(media_id: str | None, label_width_mm: float, label_height_mm: float,
-            printer_id: str) -> Media:
+def resolve(
+    media_id: str | None, label_width_mm: float, label_height_mm: float, printer_id: str
+) -> Media:
     """Pick the media explicitly, or infer it from the label size."""
     if media_id:
         m = by_id(media_id)
@@ -132,8 +135,7 @@ def resolve(media_id: str | None, label_width_mm: float, label_height_mm: float,
     if m is None:
         raise SystemExit(
             f"no DK media matches a {label_width_mm:g}x{label_height_mm:g}mm label; "
-            f"pass --media ID, one of: "
-            + ", ".join(x.id for x in for_printer(printer_id))
+            f"pass --media ID, one of: " + ", ".join(x.id for x in for_printer(printer_id))
         )
     return m
 
@@ -163,9 +165,11 @@ def fit(img: Image.Image, media: Media, min_rows: int = 0) -> Image.Image:
         return img
 
     scale = min(printable_w / img.width, printable_h / img.height)
-    sized = img.resize((max(1, round(img.width * scale)),
-                        max(1, round(img.height * scale))), Image.LANCZOS)
+    sized = img.resize(
+        (max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS
+    )
     canvas = Image.new("RGB", (printable_w, printable_h), "white")
-    canvas.paste(sized.convert("RGB"),
-                 ((printable_w - sized.width) // 2, (printable_h - sized.height) // 2))
+    canvas.paste(
+        sized.convert("RGB"), ((printable_w - sized.width) // 2, (printable_h - sized.height) // 2)
+    )
     return canvas

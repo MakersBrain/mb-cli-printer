@@ -16,10 +16,10 @@ import re
 import shutil
 import subprocess
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable
 from urllib.parse import quote
 
 from PIL import Image, ImageDraw, ImageFont
@@ -35,7 +35,12 @@ OPTIONAL_PATTERN = re.compile(r"\[\[(.*?)\]\]", re.DOTALL)
 
 _FONT_CANDIDATES = {
     "sans": ["DejaVuSans.ttf", "LiberationSans-Regular.ttf", "NotoSans-Regular.ttf", "Arial.ttf"],
-    "sans-bold": ["DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "NotoSans-Bold.ttf", "Arial-Bold.ttf"],
+    "sans-bold": [
+        "DejaVuSans-Bold.ttf",
+        "LiberationSans-Bold.ttf",
+        "NotoSans-Bold.ttf",
+        "Arial-Bold.ttf",
+    ],
     "sans-italic": ["DejaVuSans-Oblique.ttf", "LiberationSans-Italic.ttf"],
     "sans-bolditalic": ["DejaVuSans-BoldOblique.ttf", "LiberationSans-BoldItalic.ttf"],
     "serif": ["DejaVuSerif.ttf", "LiberationSerif-Regular.ttf", "NotoSerif-Regular.ttf"],
@@ -95,8 +100,12 @@ def _font_path(family: str, bold: bool, italic: bool) -> str | None:
                 return out
         except (OSError, subprocess.SubprocessError):
             pass
-    log.debug("no %s%s%s font found; trying the plain family",
-              family, "-bold" if bold else "", "-italic" if italic else "")
+    log.debug(
+        "no %s%s%s font found; trying the plain family",
+        family,
+        "-bold" if bold else "",
+        "-italic" if italic else "",
+    )
     # Last resort: any of the plain candidates for this family.
     for candidate in _FONT_CANDIDATES.get(family, []):
         try:
@@ -111,8 +120,11 @@ def _font_path(family: str, bold: bool, italic: bool) -> str | None:
 def _load_font(family: str, bold: bool, italic: bool, size: int):
     path = _font_path(family, bold, italic)
     if not path:
-        log.warning("no %s font on this system; falling back to the bitmap default, "
-                    "which ignores the layout's font size", family)
+        log.warning(
+            "no %s font on this system; falling back to the bitmap default, "
+            "which ignores the layout's font size",
+            family,
+        )
         return ImageFont.load_default()
     log.debug("font %s %dpx -> %s", family, size, path)
     try:
@@ -158,7 +170,7 @@ def _f_truncate(value: str, arg: str) -> str:
         raise SystemExit(f"truncate: expected a length, got {arg!r}")
     if width <= 0 or len(value) <= width:
         return value
-    return value[:max(1, width - 1)].rstrip() + "\u2026"
+    return value[: max(1, width - 1)].rstrip() + "\u2026"
 
 
 def _f_slug(value: str) -> str:
@@ -180,7 +192,7 @@ FILTERS: dict[str, Callable[[str, str, str], str]] = {
     "num": _f_num,
     "slug": lambda v, a, d: _f_slug(v),
     "urlencode": lambda v, a, d: quote(v, safe=""),
-    "replace": lambda v, a, d: v.replace(*(a.split(":", 1) + [""])[:2]),
+    "replace": lambda v, a, d: v.replace(*[*a.split(":", 1), ""][:2]),
 }
 
 
@@ -283,8 +295,12 @@ class Label:
 
     def templates(self) -> list[str]:
         """Every template string in the layout: text, QR data and barcode data."""
-        return [el[key] for el in self.elements for key in ("text", "qrData", "barcodeData")
-                if el.get(key)]
+        return [
+            el[key]
+            for el in self.elements
+            for key in ("text", "qrData", "barcodeData")
+            if el.get(key)
+        ]
 
     def placeholders(self, required_only: bool = False) -> list[str]:
         seen: list[str] = []
@@ -304,7 +320,7 @@ class Label:
         return seen
 
     @classmethod
-    def load(cls, path: str | Path) -> "Label":
+    def load(cls, path: str | Path) -> Label:
         p = Path(path)
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -317,9 +333,14 @@ class Label:
         height = data.get("heightMm") or size.get("height")
         if not width or not height:
             raise SystemExit(f"{p}: missing widthMm/heightMm")
-        log.debug("loaded %s: %s elements, %smm x %smm at %s dots/mm",
-                  p, len(data.get("elements") or []), width, height,
-                  data.get("dotsPerMm") or 8)
+        log.debug(
+            "loaded %s: %s elements, %smm x %smm at %s dots/mm",
+            p,
+            len(data.get("elements") or []),
+            width,
+            height,
+            data.get("dotsPerMm") or 8,
+        )
         return cls(
             width_mm=float(width),
             height_mm=float(height),
@@ -362,16 +383,22 @@ def _wrap(draw, text: str, font, max_width: float) -> list[str]:
     return lines or [""]
 
 
-def _auto_scale_size(draw, el: dict, text: str, w: float, h: float,
-                     family: str, bold: bool, italic: bool, base: float) -> float:
+def _auto_scale_size(
+    draw,
+    el: dict,
+    text: str,
+    w: float,
+    h: float,
+    family: str,
+    bold: bool,
+    italic: bool,
+    base: float,
+) -> float:
     """Largest size (down from `base`) whose wrapped block fits the box."""
     size = max(6.0, base)
     while size > 5:
         font = _load_font(family, bold, italic, round(size))
-        if el.get("noWrap"):
-            lines = text.split("\n")
-        else:
-            lines = _wrap(draw, text, font, max(1.0, w - 8))
+        lines = text.split("\n") if el.get("noWrap") else _wrap(draw, text, font, max(1.0, w - 8))
         widest = max((draw.textlength(ln, font=font) for ln in lines), default=0)
         if widest <= w - 8 and len(lines) * size * 1.2 <= h:
             return size
@@ -379,8 +406,9 @@ def _auto_scale_size(draw, el: dict, text: str, w: float, h: float,
     return 6.0
 
 
-def _render_text(layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float,
-                 scale: float) -> None:
+def _render_text(
+    layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float, scale: float
+) -> None:
     text = el.get("text") or ""
     draw = ImageDraw.Draw(layer)
     background = el.get("background")
@@ -425,8 +453,7 @@ def _render_text(layer: Image.Image, el: dict, w: float, h: float, ox: float, oy
             length = draw.textlength(line, font=font)
             ux = x if align == "left" else (x - length if align == "right" else x - length / 2)
             uy = y + base_size * 0.45
-            draw.line([ux, uy, ux + length, uy], fill=color,
-                      width=max(1, round(base_size / 16)))
+            draw.line([ux, uy, ux + length, uy], fill=color, width=max(1, round(base_size / 16)))
         y += line_height
 
 
@@ -509,12 +536,16 @@ def _render_barcode(layer: Image.Image, el: dict, w: float, h: float, ox: float,
         import barcode
         from barcode.writer import ImageWriter
     except ImportError:
-        raise SystemExit(
-            "barcode elements need python-barcode: pip install python-barcode"
-        )
+        raise SystemExit("barcode elements need python-barcode: pip install python-barcode")
     fmt = (el.get("barcodeFormat") or "code128").lower().replace("_", "")
-    aliases = {"code128": "code128", "code39": "code39", "ean13": "ean13",
-               "ean8": "ean8", "upca": "upca", "itf": "itf"}
+    aliases = {
+        "code128": "code128",
+        "code39": "code39",
+        "ean13": "ean13",
+        "ean8": "ean8",
+        "upca": "upca",
+        "itf": "itf",
+    }
     try:
         cls = barcode.get_barcode_class(aliases.get(fmt, fmt))
     except Exception:
@@ -529,8 +560,9 @@ def _render_barcode(layer: Image.Image, el: dict, w: float, h: float, ox: float,
     layer.alpha_composite(img, (round(ox), round(oy)))
 
 
-def _render_shape(layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float,
-                  scale: float) -> None:
+def _render_shape(
+    layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float, scale: float
+) -> None:
     draw = ImageDraw.Draw(layer)
     shape = el.get("shapeType") or el.get("shape") or "rectangle"
     fill = el.get("fill") if el.get("fill") not in (None, "transparent", "none") else None
@@ -549,8 +581,9 @@ def _render_shape(layer: Image.Image, el: dict, w: float, h: float, ox: float, o
         draw.rectangle(box, fill=fill, outline=stroke, width=width)
 
 
-def render(label: Label, record: dict | None = None, scale: float = 1.0,
-           decimal: str = ",") -> Image.Image:
+def render(
+    label: Label, record: dict | None = None, scale: float = 1.0, decimal: str = ","
+) -> Image.Image:
     """Render one label to an RGB image. `scale` > 1 renders for higher-dpi heads."""
     record = record or {}
     width = max(1, round(label.width_px * scale))

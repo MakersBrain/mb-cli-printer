@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import BinaryIO
 
 from mbprint.log import get_logger, hexdump, trace, tracing
 from mbprint.transport import Transport
@@ -20,13 +21,14 @@ class FileTransport(Transport):
 
     name = "file"
 
-    def __init__(self, path: str = "-", max_write: int = 512, quiet: bool = True,
-                 pace: bool = False):
+    def __init__(
+        self, path: str = "-", max_write: int = 512, quiet: bool = True, pace: bool = False
+    ):
         self.path = path
         self.max_write = max_write
         self.quiet = quiet
         self.pace = pace
-        self._fh = None
+        self._fh: BinaryIO | None = None
         self.bytes_written = 0
 
     async def open(self) -> None:
@@ -34,7 +36,7 @@ class FileTransport(Transport):
             self._fh = None
         else:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-            self._fh = open(self.path, "wb")
+            self._fh = open(self.path, "wb")  # noqa: SIM115 - closed in close()
 
     async def close(self) -> None:
         if self.path not in ("-", os.devnull):

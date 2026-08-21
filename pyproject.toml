@@ -19,6 +19,9 @@ barcode = ["python-barcode>=0.15"]
 [project.scripts]
 mbprint = "mbprint.cli:main"
 
+[tool.uv.sources]
+brother-ql = { git = "https://github.com/pklaus/brother_ql.git" }
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -30,7 +33,50 @@ packages = ["mbprint"]
 dev = [
     "pytest>=8.0",
     # Reference implementation of the Brother QL raster language. The test
-    # suite diffs our byte stream against it; skipped when absent.
+    # suite diffs our byte stream against it; skipped when absent. It has to
+    # come from git: the last PyPI release predates the QL-1100 series.
     "brother-ql",
     "packbits",
+    "ruff>=0.6",
+    "mypy>=1.11",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import sorting
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "SIM",      # simplifications
+    "RUF",      # ruff's own rules
+]
+ignore = [
+    "E501",     # long lines: the formatter decides what it can wrap
+    "B904",     # the CLI raises bare SystemExit on purpose: Python prints just
+                # the message, so chaining would add nothing for the user
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into internals and build throwaway objects.
+"tests/*" = ["B011"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.10"
+files = ["mbprint"]
+strict = true
+# Optional extras: bleak, pyusb, rich and python-barcode may be absent.
+ignore_missing_imports = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# The test suite is not type-checked; it leans on fixtures and duck typing.
+module = "tests.*"
+ignore_errors = true

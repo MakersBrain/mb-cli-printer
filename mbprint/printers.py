@@ -16,9 +16,9 @@ from mbprint.log import get_logger
 log = get_logger(__name__)
 
 BUNDLED = Path(__file__).with_name("printers.json")
-USER_DEFS = Path(
-    os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
-) / "mbprint" / "printers.json"
+USER_DEFS = (
+    Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "mbprint" / "printers.json"
+)
 
 # Fallback when nothing matches: the widest common M-series geometry.
 DEFAULT_CONFIG = {
@@ -87,7 +87,7 @@ class PrinterDef:
         return PROTOCOL_CHUNK_DELAY.get(self.protocol, DEFAULT_CHUNK_DELAY_MS)
 
     @classmethod
-    def from_json(cls, d: dict) -> "PrinterDef":
+    def from_json(cls, d: dict) -> PrinterDef:
         return cls(
             id=d["id"],
             name=d.get("name", d["id"]),
@@ -123,9 +123,7 @@ def all_definitions() -> list[PrinterDef]:
     """Built-in definitions merged with user ones (user wins on id collision)."""
     customs = [PrinterDef.from_json({**d, "builtin": False}) for d in _load(USER_DEFS)]
     custom_ids = {d.id for d in customs}
-    builtins = [
-        PrinterDef.from_json(d) for d in _load(BUNDLED) if d["id"] not in custom_ids
-    ]
+    builtins = [PrinterDef.from_json(d) for d in _load(BUNDLED) if d["id"] not in custom_ids]
     return customs + builtins
 
 
@@ -168,13 +166,13 @@ def resolve(model: str | None = None, device_name: str | None = None) -> Printer
         return d
     detected = detect(device_name)
     if detected:
-        log.debug("detected %s [%s] from device name %r",
-                  detected.name, detected.id, device_name)
+        log.debug("detected %s [%s] from device name %r", detected.name, detected.id, device_name)
         return detected
     log.warning(
         "device name %r matches no known model; falling back to a generic %dpx %s "
         "head, which will misprint on most printers",
-        device_name or "(unknown)", DEFAULT_CONFIG["widthBytes"] * 8,
+        device_name or "(unknown)",
+        DEFAULT_CONFIG["widthBytes"] * 8,
         DEFAULT_CONFIG["protocol"],
     )
     log.warning("pass --model MODEL, or run: mbprint config set model MODEL")

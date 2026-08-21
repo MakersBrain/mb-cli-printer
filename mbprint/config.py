@@ -66,7 +66,7 @@ def data_templates(config: dict | None = None) -> list[tuple[str, str]]:
 def set_key(config: dict, key: str, value: str) -> dict:
     """Set a scalar key, or a `data.<name>` template."""
     if key.startswith(NESTED_PREFIX):
-        name = key[len(NESTED_PREFIX):]
+        name = key[len(NESTED_PREFIX) :]
         if not name:
             raise SystemExit("config key 'data.' needs a field name, e.g. data.qr")
         config.setdefault("data", {})[name] = value
@@ -77,7 +77,7 @@ def set_key(config: dict, key: str, value: str) -> dict:
 
 def unset_key(config: dict, key: str) -> dict:
     if key.startswith(NESTED_PREFIX):
-        config.get("data", {}).pop(key[len(NESTED_PREFIX):], None)
+        config.get("data", {}).pop(key[len(NESTED_PREFIX) :], None)
         if not config.get("data"):
             config.pop("data", None)
     else:

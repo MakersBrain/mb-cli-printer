@@ -19,19 +19,21 @@ DEFAULT_PORT = 9100
 class TCPTransport(Transport):
     name = "tcp"
 
-    def __init__(self, host: str, port: int = DEFAULT_PORT, max_write: int = 4096,
-                 timeout: float = 10.0):
+    def __init__(
+        self, host: str, port: int = DEFAULT_PORT, max_write: int = 4096, timeout: float = 10.0
+    ):
         self.host = host
         self.port = port
         self.max_write = max_write
         self.timeout = timeout
-        self._reader = None
-        self._writer = None
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
 
     async def open(self) -> None:
         try:
             self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), self.timeout)
+                asyncio.open_connection(self.host, self.port), self.timeout
+            )
         except (OSError, asyncio.TimeoutError) as exc:
             raise SystemExit(f"cannot reach {self.host}:{self.port}: {exc}")
         log.info("connected to %s:%d, %d-byte writes", self.host, self.port, self.max_write)

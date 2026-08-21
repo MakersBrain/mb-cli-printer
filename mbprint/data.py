@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from mbprint.log import get_logger
 from mbprint.layout import substitute
+from mbprint.log import get_logger
 
 log = get_logger(__name__)
 
@@ -47,7 +47,7 @@ def _format_price(raw: str, decimal_separator: str = ",") -> tuple[str, str]:
     except ValueError:
         return raw or "", raw or ""
     if abs(number - round(number)) < 1e-9:
-        short = str(int(round(number)))
+        short = str(round(number))
     else:
         short = f"{number:.2f}".rstrip("0").rstrip(".").replace(".", decimal_separator)
     full = f"{number:.2f}".replace(".", decimal_separator)
@@ -71,7 +71,9 @@ def build_mapping(headers: list[str], overrides: dict[str, str] | None = None) -
             if column:
                 mapping[key] = column
                 break
-    log.debug("auto-mapped %s", ", ".join(f"{k}<-{v}" for k, v in sorted(mapping.items())) or "nothing")
+    log.debug(
+        "auto-mapped %s", ", ".join(f"{k}<-{v}" for k, v in sorted(mapping.items())) or "nothing"
+    )
     for key, column in (overrides or {}).items():
         if column not in headers:
             match = index.get(_normalize(column))
@@ -97,10 +99,7 @@ def load_csv(path: str | Path) -> tuple[list[str], list[dict]]:
         dialect = csv.excel
     reader = csv.DictReader(text.splitlines(), dialect=dialect)
     headers = [h for h in (reader.fieldnames or []) if h is not None]
-    rows = [
-        {k: (v or "").strip() for k, v in row.items() if k is not None}
-        for row in reader
-    ]
+    rows = [{k: (v or "").strip() for k, v in row.items() if k is not None} for row in reader]
     rows = [r for r in rows if any(r.values())]
     log.debug("%s: %d columns, %d rows", p, len(headers), len(rows))
     if not headers:
@@ -108,8 +107,7 @@ def load_csv(path: str | Path) -> tuple[list[str], list[dict]]:
     return headers, rows
 
 
-def apply_data(record: dict, entries: list[tuple[str, str]],
-               decimal: str = ",") -> dict:
+def apply_data(record: dict, entries: list[tuple[str, str]], decimal: str = ",") -> dict:
     """Evaluate `--data KEY=TEMPLATE` pairs in order, in place.
 
     Order matters: each entry can use the fields defined before it, so
@@ -154,8 +152,11 @@ def build_records(
 
     if limit is not None:
         records = records[:limit]
-    log.debug("built %d record(s); derived fields: %s", len(records),
-              ", ".join(k for k, _ in data_entries or []) or "none")
+    log.debug(
+        "built %d record(s); derived fields: %s",
+        len(records),
+        ", ".join(k for k, _ in data_entries or []) or "none",
+    )
     return RecordSet(headers=headers, records=records, mapping=mapping)
 
 

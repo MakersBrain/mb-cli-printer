@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from types import TracebackType
+from typing import Any, TypeVar
+
+TransportT = TypeVar("TransportT", bound="Transport")
 
 
 class Transport:
@@ -33,15 +37,20 @@ class Transport:
         await self.delay(timeout_ms)
         return None
 
-    async def __aenter__(self):
+    async def __aenter__(self: TransportT) -> TransportT:
         await self.open()
         return self
 
-    async def __aexit__(self, *exc):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         await self.close()
 
 
-def build(kind: str, **kwargs) -> Transport:
+def build(kind: str, **kwargs: Any) -> Transport:
     if kind == "ble":
         from mbprint.transport.ble import BLETransport
 

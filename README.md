@@ -396,13 +396,11 @@ implemented but untested against one**: Brother's vendor id and the bulk IN
 endpoint that carries the status block are in place, but no QL has been on the
 end of a USB cable here. Expect it to work, check the first print.
 
-`--media` is optional on all three: the printer is asked what is loaded. Over
-Bluetooth, serial and USB that is the raster status block; over the network it
-is IPP, because a QL accepts jobs on port 9100 but answers status only on 631.
-
-`--media` names the loaded roll explicitly, overriding what the printer says;
-`mbprint printers` lists the models and the table below the DK ids. With
-neither, the roll is inferred from the layout size.
+`--media` is optional on all three links: the printer is asked what is loaded.
+Over Bluetooth, serial and USB that answer comes from the raster status block;
+over the network it comes from IPP, because a QL accepts jobs on port 9100 but
+answers status only on 631. Pass `--media` to override what the printer says,
+and if nothing can be reached the roll is inferred from the layout size.
 
 | id | roll |
 |---|---|
@@ -426,10 +424,18 @@ Three things differ from the Phomemo families:
 
 Finishing: `--no-cut` leaves the labels joined, `--cut-every N` cuts every Nth.
 
-`mbprint status --model ql-1110nwb -t tcp --host IP` asks the printer what roll
-is loaded and whether it has any errors. Networked QLs usually accept jobs on
-port 9100 but answer status only over USB or Bluetooth; when nothing comes back
-mbprint says so and asks you to name the roll with `--media`.
+`mbprint status` asks the printer what roll is loaded and whether it has any
+errors, over whichever link you point it at:
+
+```sh
+mbprint status --model ql-1110nwb -t bluetooth --address 74:97:79:16:1A:1E
+mbprint status --model ql-1110nwb -t tcp --host 192.168.1.50
+```
+
+Over Bluetooth that is the printer's own status block, giving media, phase and
+error flags. Over the network the raster status stays silent, so mbprint falls
+back to IPP and reports the model, the roll mapped to a `--media` id, the state,
+and reasons such as an open cover.
 
 Find one on the network without knowing its address:
 

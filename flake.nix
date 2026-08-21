@@ -126,9 +126,13 @@
             wireshark-cli # tshark, for btsnoop_hci.log from the phone
             usbutils
             bluez
+            libusb1 # the backend pyusb dlopens for --transport usb
           ];
 
           shellHook = ''
+            ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+              export LD_LIBRARY_PATH="${pkgs.libusb1}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            ''}
             echo "reversing shell: adb, jadx, apktool, dex2jar, radare2, tshark, androguard"
             echo
             echo "  nix run .#pull-apk            pull ${defaultPackage}"

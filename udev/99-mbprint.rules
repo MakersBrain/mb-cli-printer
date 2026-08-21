@@ -1,0 +1,14 @@
+# Label printers reachable over --transport usb.
+#
+# The device nodes are root-owned by default, so libusb cannot open them as an
+# ordinary user. These rules hand the node to the local seat via uaccess and to
+# the plugdev group as a fallback for remote or headless sessions.
+#
+# Install (non-NixOS):
+#   sudo cp udev/99-mbprint.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+# On NixOS, see docs/printers-and-transports.md.
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="04f9", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTR{idVendor}=="2e3c", TAG+="uaccess", GROUP="plugdev", MODE="0660"

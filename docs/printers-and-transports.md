@@ -53,6 +53,23 @@ On Linux, USB normally needs a udev rule granting access to the device. Known
 vendor IDs include `04f9` for Brother and `0483` or `2e3c` for Phomemo. Install
 the `usb` extra before using this transport.
 
+`udev/99-mbprint.rules` covers all three vendors:
+
+```sh
+sudo cp udev/99-mbprint.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+On NixOS, add the rules to the system configuration instead:
+
+```nix
+services.udev.extraRules = builtins.readFile ./udev/99-mbprint.rules;
+```
+
+Replug the printer afterwards. pyusb also needs a libusb shared library on the
+loader path; the flake's dev shell provides one, and elsewhere installing
+`libusb1` system-wide is enough.
+
 ## MTU and pacing
 
 Each data write is limited to the smaller of the protocol chunk size and the
@@ -125,8 +142,8 @@ For PNG previews:
 ## Brother QL
 
 The QL-1100 series uses Brother ESC/P raster commands and fixed DK roll
-geometry. Network and classic Bluetooth printing have been verified on a
-QL-1110NWB. USB support is implemented but has not been tested on QL hardware.
+geometry. Network, classic Bluetooth, and USB printing have all been verified
+on a QL-1110NWB.
 
 ```sh
 # Network

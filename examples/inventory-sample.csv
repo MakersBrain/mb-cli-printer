@@ -1,0 +1,4 @@
+Currency,Activity State,Product Category,Favorite,Name,Internal Reference,# Product Variants,Sales Price,Quantity On Hand,Unit,Image 128,Last Updated on,Show On Hand Qty Status Button
+EUR,,Goods / Sample / Gadgets,FALSE,Alpha Gadget,AG-EX-0001,1,40.00,3.00,Units,,,TRUE
+EUR,,Goods / Sample / Widgets,FALSE,Beta Widget,BW-EX-0002,1,49.50,2.00,Units,,,TRUE
+EUR,,Goods / Sample / Widgets,FALSE,Gamma Widget,GW-EX-0003,1,18.50,7.00,Units,,,TRUE

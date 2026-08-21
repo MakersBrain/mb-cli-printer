@@ -86,6 +86,10 @@ after enabling it. A bug report normally contains the log at
 `FS/data/misc/bluetooth/logs/btsnoop_hci.log`. Reassemble HCI ACL into L2CAP and
 then RFCOMM UIH payloads to recover a classic serial stream.
 
+[Brother wireless configuration](brother-wireless-config.md) records what the
+iPrint&Label app sends to put a QL on a network, as a worked example of reading
+a protocol out of a decompiled app.
+
 A new printer normally requires a flow in `protocol.py` and a definition in
 `printers.json`. Add framing, raster, detection, and MTU tests before relying on
 hardware validation.

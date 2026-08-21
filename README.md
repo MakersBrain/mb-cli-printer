@@ -182,6 +182,7 @@ More model- and transport-specific guidance is in
 - [Data, templates, and filters](docs/data-and-templates.md)
 - [Printers and transports](docs/printers-and-transports.md)
 - [CLI reference](docs/cli-reference.md)
+- [Brother wireless configuration](docs/brother-wireless-config.md)
 - [Development and reverse engineering](docs/development.md)
 
 ## Development

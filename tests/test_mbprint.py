@@ -813,3 +813,22 @@ def test_media_resolution_and_fitting():
     fitted = M.fit(Image.new("RGB", (400, 100), "white"), endless, min_rows=301)
     assert fitted.width == endless.dots_printable[0]
     assert fitted.height == 301  # padded up to the minimum
+
+
+def test_media_lookup_accepts_a_transposed_size():
+    """A printer may name a die-cut roll from the label's side, not the tape's.
+
+    This QL-1110NWB reports DK-1209 as 29x62mm where the media table calls it
+    62x29: same roll, and the two readings need opposite raster dimensions, so
+    picking the wrong one makes the printer error after printing.
+    """
+    from mbprint import media as M
+
+    direct = M.from_size(62, 29, "ql-1110nwb")
+    transposed = M.from_size(29, 62, "ql-1110nwb")
+    assert direct is not None and direct.id == "62x29"
+    assert transposed is direct
+    assert direct.dots_printable == (696, 271)
+    # A size that is in the table only one way round still resolves.
+    assert M.from_size(90, 29, "ql-1110nwb").id == "29x90"
+    assert M.from_size(11, 13, "ql-1110nwb") is None

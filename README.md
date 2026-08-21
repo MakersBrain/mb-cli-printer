@@ -423,10 +423,18 @@ Find one on the network without knowing its address:
 avahi-browse -rtp _pdl-datastream._tcp | grep -i QL-
 ```
 
-Verification without hardware: our byte stream is compared against the
-`brother_ql` project's output for the same image, byte for byte, across eight
-media and compression combinations — including the rolls whose printable width
-is not a whole number of bytes, where placement is easiest to get wrong.
+Verified on a QL-1110NWB over the network, on DK-1209 die-cut labels. Beyond
+that, the byte stream is compared against the `brother_ql` project's output for
+the same image, byte for byte, across eight media and compression combinations —
+including the rolls whose printable width is not a whole number of bytes, where
+placement is easiest to get wrong.
+
+One trap worth knowing: a printer may name a die-cut roll from the label's side
+rather than the tape's. This one reports DK-1209 as `29x62mm` where the media
+table calls it `62x29`. They are the same roll but need opposite raster
+dimensions, and getting it backwards makes the printer accept the job, print,
+and then stop with an error. `--media` lookups therefore try a size both ways
+round, and `mbprint status` shows which entry it settled on.
 
 ## Transports
 

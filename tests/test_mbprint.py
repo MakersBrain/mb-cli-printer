@@ -832,3 +832,30 @@ def test_media_lookup_accepts_a_transposed_size():
     # A size that is in the table only one way round still resolves.
     assert M.from_size(90, 29, "ql-1110nwb").id == "29x90"
     assert M.from_size(11, 13, "ql-1110nwb") is None
+
+
+def test_brother_status_block_from_real_hardware():
+    """A status block captured from a QL-1110NWB over Bluetooth.
+
+    Taken from an HCI snoop of the Brother app printing to the same DK-1209
+    roll this driver was tested on. The printer reports the media as 62mm wide
+    with 29mm labels, which is the reading the media table uses.
+    """
+    block = bytes.fromhex(
+        "80 20 42 34 44 30 00 00 00 00 3e 0b 00 00 03 00"
+        "00 1d 00 00 00 00 00 00 00 00 00 00 00 00 00 00".replace(" ", "")
+    )
+    status = protocol.brother_parse_status(block)
+    assert status["media_width_mm"] == 62
+    assert status["media_length_mm"] == 29
+    assert status["media_type"] == "die-cut"
+    assert status["status_type"] == "reply to status request"
+    assert status["phase"] == "waiting to receive"
+    assert status["errors"] == []
+
+
+def test_brother_status_rejects_a_foreign_reply():
+    with pytest.raises(SystemExit):
+        protocol.brother_parse_status(bytes(32))  # no 80 20 42 header
+    with pytest.raises(SystemExit):
+        protocol.brother_parse_status(bytes([0x80, 0x20, 0x42]))  # too short

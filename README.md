@@ -429,6 +429,13 @@ the same image, byte for byte, across eight media and compression combinations �
 including the rolls whose printable width is not a whole number of bytes, where
 placement is easiest to get wrong.
 
+Cross-checked against Brother's own app: an HCI snoop of iPrint&Label printing
+to the same printer and roll shows the same print information (die-cut, 62mm,
+29mm, 271 raster lines), the same cut and expanded-mode flags, zero margins and
+PackBits raster. The app differs only in details that do not matter — a longer
+clear sequence, automatic status notification, one flag bit, command order, and
+a PackBits run cap of 128 against our 127.
+
 One trap worth knowing: a printer may name a die-cut roll from the label's side
 rather than the tape's. This one reports DK-1209 as `29x62mm` where the media
 table calls it `62x29`. They are the same roll but need opposite raster
@@ -537,6 +544,14 @@ Two other sources are usually faster than reading decompiled code:
   shows the actual bytes the app sends, which is how several protocols in
   `printers.json` were pinned down.
 - **USB capture** with `usbmon` and Wireshark, if the printer is wired.
+
+On a Pixel, "Bluetooth HCI snoop log" must be set to **Enabled**, not Filtered:
+filtered truncates every packet to 15 bytes, which loses the payload entirely.
+The stack has to be restarted afterwards (`adb shell cmd bluetooth_manager
+disable` then `enable`), and the log arrives as
+`FS/data/misc/bluetooth/logs/btsnoop_hci.log` inside `adb bugreport`. From
+there, reassemble HCI ACL into L2CAP, then RFCOMM UIH payloads, to recover the
+serial stream the app sent.
 
 Whatever the source, the target is a new flow in `protocol.py` plus an entry in
 `printers.json` — see [the module map](#layout).
@@ -690,11 +705,12 @@ swaps in a paced file transport instead of a printer.
 uv run pytest tests -q
 ```
 
-Eighty-two tests covering templating, filters and optional segments, the
+Eighty-five tests covering templating, filters and optional segments, the
 missing-field gate, column mapping and copy counts, raster packing, alignment,
 offsets and rotation, the framing of every protocol, MTU clamping end to end,
 model detection, PDF page geometry, the config data table, the progress
-reporters, the logging setup including the command trace, and the Brother
-stream checked byte for byte against brother_ql. No hardware
+reporters, the logging setup including the command trace, the Brother
+stream checked byte for byte against brother_ql, and a status block captured
+from a real QL-1110NWB. No hardware
 needed: the file transport captures what would have been sent, and `--dry-run`
 exercises the whole flow.

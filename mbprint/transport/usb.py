@@ -1,4 +1,9 @@
-"""Raw USB bulk transport (PM-241 and USB-capable M-series)."""
+"""Raw USB bulk transport (PM-241, USB-capable M-series, and the Brother QL).
+
+The Brother path is written from the device's descriptors rather than tried: no
+QL has been connected over USB here, so the first print on one is worth
+watching. The network and Bluetooth transports are verified on a QL-1110NWB.
+"""
 
 from __future__ import annotations
 

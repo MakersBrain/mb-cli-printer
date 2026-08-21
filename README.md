@@ -387,9 +387,14 @@ bluetoothctl pair 74:97:79:16:1A:1E && bluetoothctl trust 74:97:79:16:1A:1E
 mbprint print -l label.json -c inventory.csv \
   --model ql-1110nwb -t bluetooth --address 74:97:79:16:1A:1E
 
-# USB
+# USB (untested on a QL, see below)
 mbprint print -l label.json -c inventory.csv --model ql-1110nwb -t usb
 ```
+
+The network and Bluetooth paths are verified on a QL-1110NWB. **USB is
+implemented but untested against one**: Brother's vendor id and the bulk IN
+endpoint that carries the status block are in place, but no QL has been on the
+end of a USB cable here. Expect it to work, check the first print.
 
 `--media` is optional on all three: the printer is asked what is loaded. Over
 Bluetooth, serial and USB that is the raster status block; over the network it
@@ -477,7 +482,8 @@ works either way.
 
 USB needs permission to claim the device. On Linux that usually means a udev
 rule granting your user access to the printer's vendor id (`04f9` for Brother,
-`0483`/`2e3c` for Phomemo), or running as root.
+`0483`/`2e3c` for Phomemo), or running as root. The USB path is exercised on
+Phomemo hardware; against a Brother QL it is written but not yet tried.
 
 ### Dry runs
 

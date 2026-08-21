@@ -146,10 +146,16 @@ def add_printer_options(p: argparse.ArgumentParser) -> None:
         "--transport",
         "-t",
         default=None,
-        choices=["ble", "tcp", "serial", "usb", "file"],
-        help="transport (default ble; tcp for network printers)",
+        choices=["ble", "bluetooth", "tcp", "serial", "usb", "file"],
+        help="transport (default ble; bluetooth for classic SPP, tcp for network)",
     )
     p.add_argument("--host", default=None, help="printer hostname or IP, for --transport tcp")
+    p.add_argument(
+        "--rfcomm-channel",
+        type=int,
+        default=1,
+        help="RFCOMM channel for --transport bluetooth (default 1)",
+    )
     p.add_argument("--tcp-port", type=int, default=9100, help="TCP port (default 9100)")
     p.add_argument("--address", default=None, help="BLE MAC address")
     p.add_argument("--device", default=None, help="BLE device name (substring match)")
@@ -311,19 +317,53 @@ def _ask(question: str) -> bool:
         return False
 
 
-def _ipp_media(args: Args, printer: printers.PrinterDef) -> mediamod.Media | None:
-    """Ask a network printer which roll is loaded, over IPP.
+def _reported_size(args: Args, printer: printers.PrinterDef) -> tuple[float, float] | None:
+    """Ask the printer itself what roll is loaded, however we can reach it.
+
+    Over Bluetooth, serial or USB the raster status block answers directly.
+    Networked QLs stay silent on port 9100 but do answer IPP on 631.
+    """
+    transport_kind = _pick(args, "transport", "ble")
+    if transport_kind == "tcp":
+        host = getattr(args, "host", None) or cfg.load().get("host")
+        info = ipp.loaded_media(host) if host else None
+        if info and info.get("reasons"):
+            log.warning("printer reports: %s", ", ".join(info["reasons"]))
+        return info.get("size_mm") if info else None
+    if transport_kind not in ("bluetooth", "serial", "usb"):
+        return None
+    if getattr(args, "dry_run", False):
+        # A dry run touches no hardware, so there is nobody to ask.
+        log.debug("dry run: taking the media from the label size, not the printer")
+        return None
+
+    async def query() -> dict[str, Any] | None:
+        transport = _make_transport(args, printer)
+        async with transport:
+            return await protocol.brother_query_status(transport, printer)
+
+    try:
+        status = asyncio.run(query())
+    except SystemExit as exc:
+        log.debug("status query failed, falling back to the label size: %s", exc)
+        return None
+    if not status or not status.get("media_width_mm"):
+        return None
+    if status.get("errors"):
+        log.warning("printer reports: %s", ", ".join(status["errors"]))
+    return float(status["media_width_mm"]), float(status["media_length_mm"])
+
+
+def _printer_media(args: Args, printer: printers.PrinterDef) -> mediamod.Media | None:
+    """Which roll the printer says is loaded, mapped to a media table entry.
 
     The printer knows better than the layout does, and printing on the wrong
     roll wastes labels, so this wins over inferring from the label size.
     """
-    host = getattr(args, "host", None) or cfg.load().get("host")
-    if not host or _pick(args, "transport", "ble") != "tcp":
+    size = _reported_size(args, printer)
+    if not size:
         return None
-    info = ipp.loaded_media(host)
-    if not info or not info.get("size_mm"):
-        return None
-    width, length = info["size_mm"]
+    width, length = size
     media = mediamod.from_size(width, length, printer.id)
     if media is None:
         log.warning(
@@ -333,9 +373,7 @@ def _ipp_media(args: Args, printer: printers.PrinterDef) -> mediamod.Media | Non
             length,
         )
         return None
-    if info.get("reasons"):
-        log.warning("printer reports: %s", ", ".join(info["reasons"]))
-    log.info("printer reports %s loaded (%s)", media.id, info["keyword"])
+    log.info("printer reports %s loaded (%gx%gmm)", media.id, width, length)
     return media
 
 
@@ -346,7 +384,7 @@ def _resolve_media(
     if printer.protocol != "brother":
         return None
     explicit = _pick(args, "media", None)
-    media = (mediamod.by_id(explicit) if explicit else None) or _ipp_media(args, printer)
+    media = (mediamod.by_id(explicit) if explicit else None) or _printer_media(args, printer)
     if media is None:
         media = mediamod.resolve(explicit, label.width_mm, label.height_mm, printer.id)
     log.info(
@@ -425,6 +463,18 @@ def _make_transport(args: Args, printer: printers.PrinterDef | None) -> Transpor
             address=_pick(args, "address", None),
             device_name=_pick(args, "device", None),
             max_write=mtu,
+        )
+    if kind == "bluetooth":
+        address = _pick(args, "address", None)
+        if not address:
+            raise SystemExit(
+                "bluetooth transport needs --address, e.g. --address 74:97:79:16:1A:1E"
+            )
+        return build_transport(
+            "bluetooth",
+            address=address,
+            channel=getattr(args, "rfcomm_channel", 1),
+            max_write=mtu or 1024,
         )
     if kind == "tcp":
         host = args.host or cfg.load().get("host")

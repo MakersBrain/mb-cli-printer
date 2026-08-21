@@ -378,17 +378,26 @@ on DK media whose geometry is fixed per roll. Everything else — layouts, field
 filters, PDF, previews — works the same.
 
 ```sh
-# network, the usual link for a QL-1110NWB
+# network
 mbprint print -l label.json -c inventory.csv \
-  --model ql-1110nwb --transport tcp --host 192.168.1.50 --media 102x152
+  --model ql-1110nwb -t tcp --host 192.168.1.50
+
+# classic Bluetooth (SPP), after pairing once
+bluetoothctl pair 74:97:79:16:1A:1E && bluetoothctl trust 74:97:79:16:1A:1E
+mbprint print -l label.json -c inventory.csv \
+  --model ql-1110nwb -t bluetooth --address 74:97:79:16:1A:1E
 
 # USB
-mbprint print -l label.json -c inventory.csv --model ql-1110nwb -t usb --media 62
+mbprint print -l label.json -c inventory.csv --model ql-1110nwb -t usb
 ```
 
-`--media` names the loaded roll; `mbprint printers` lists the models and the
-table below the DK ids. Omit it and the roll is inferred from the layout size,
-which works when your label is drawn at the media's dimensions.
+`--media` is optional on all three: the printer is asked what is loaded. Over
+Bluetooth, serial and USB that is the raster status block; over the network it
+is IPP, because a QL accepts jobs on port 9100 but answers status only on 631.
+
+`--media` names the loaded roll explicitly, overriding what the printer says;
+`mbprint printers` lists the models and the table below the DK ids. With
+neither, the roll is inferred from the layout size.
 
 | id | roll |
 |---|---|
@@ -449,6 +458,7 @@ round, and `mbprint status` shows which entry it settled on.
 |---------------------------------|----------------------------------------------|
 | `--transport ble` (default)     | `--device NAME` or `--address MAC`           |
 | `--transport tcp`               | `--host IP [--tcp-port 9100]`, network printers |
+| `--transport bluetooth`         | `--address MAC [--rfcomm-channel 1]`, classic SPP |
 | `--transport serial`            | `--port /dev/rfcomm0`, classic Bluetooth SPP |
 | `--transport usb`               | `--usb-vid 0x0483 --usb-pid 0x5740`          |
 | `--transport file --out job.bin`| capture the byte stream, print nothing       |
@@ -456,6 +466,18 @@ round, and `mbprint status` shows which entry it settled on.
 `--device` matches a case-insensitive substring of the advertised name. With
 neither `--device` nor `--address`, mbprint scans and takes the first device
 whose name matches a known model pattern.
+
+`ble` and `bluetooth` are different radios, not synonyms: `ble` is GATT, which
+the Phomemo models use, while `bluetooth` is classic RFCOMM/SPP, which the
+Brother QL series uses. Pair a classic device once with `bluetoothctl` and
+mbprint connects to its RFCOMM channel directly, with no `/dev/rfcomm` node to
+bind. Some CPython builds — including the standalone ones uv installs — ship
+without `AF_BLUETOOTH`; the transport then opens the socket through libc, so it
+works either way.
+
+USB needs permission to claim the device. On Linux that usually means a udev
+rule granting your user access to the printer's vendor id (`04f9` for Brother,
+`0483`/`2e3c` for Phomemo), or running as root.
 
 ### Dry runs
 
@@ -637,9 +659,10 @@ Grouped by what they affect. Source and render options apply to `print`, `pdf`,
 
 | option | meaning |
 |---|---|
-| `-t`, `--transport KIND` | `ble`, `tcp`, `serial`, `usb`, `file` |
+| `-t`, `--transport KIND` | `ble`, `bluetooth`, `tcp`, `serial`, `usb`, `file` |
 | `--device NAME`, `--address MAC` | which BLE printer |
 | `--host IP`, `--tcp-port N` | network printer (default port 9100) |
+| `--rfcomm-channel N` | classic Bluetooth channel (default 1) |
 | `--port PATH`, `--baud N` | serial / RFCOMM |
 | `--usb-vid ID`, `--usb-pid ID` | USB device |
 | `--mtu N` | cap the write size |
@@ -688,7 +711,8 @@ mbprint/
   config.py        persistent defaults
   log.py           logger setup, TRACE level, hex dumps
   ui.py            console detection, progress bars, rich fallbacks
-  transport/       ble.py, tcp.py, serial_port.py, usb.py, file.py
+  ipp.py           minimal IPP client, to ask a network printer what is loaded
+  transport/       ble.py, bluetooth.py, tcp.py, serial_port.py, usb.py, file.py
 ```
 
 The pipeline is the same for every command: `data.build_records` turns CSV rows

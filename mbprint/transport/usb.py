@@ -10,12 +10,14 @@ from mbprint.transport import Transport
 
 log = get_logger(__name__)
 
-# Known Phomemo USB ids, same list the reference app filters on.
+# Known printer USB ids: Phomemo first, as the reference app filters them, then
+# Brother, whose QL series is a standard USB printer-class device.
 USB_IDS = [
     (0x0483, 0x5740),
     (0x0483, None),
     (0x2E3C, 0x5750),
     (0x2E3C, None),
+    (0x04F9, None),  # Brother
 ]
 
 
@@ -26,8 +28,10 @@ class USBTransport(Transport):
         self.vid = vid
         self.pid = pid
         self.max_write = max_write
+        # pyusb objects, kept untyped: the library ships no stubs.
         self._dev: Any = None
         self._ep_out: Any = None
+        self._ep_in: Any = None
 
     async def open(self) -> None:
         try:
@@ -85,6 +89,7 @@ class USBTransport(Transport):
                 pass
             self._dev = None
             self._ep_out = None
+            self._ep_in = None
 
     async def send(self, data: bytes) -> None:
         if self._ep_out is None:
@@ -92,3 +97,20 @@ class USBTransport(Transport):
         if tracing(log):
             trace(log, "-> write %d bytes: %s", len(data), hexdump(data))
         await asyncio.to_thread(self._ep_out.write, bytes(data), 5000)
+
+    async def wait_for_response(self, timeout_ms: int = 500) -> bytes | None:
+        """Read a status block, when the printer offers an IN endpoint."""
+        if self._ep_in is None:
+            await self.delay(timeout_ms)
+            return None
+
+        def read() -> bytes | None:
+            try:
+                return bytes(self._ep_in.read(64, timeout_ms))
+            except Exception:  # pyusb raises USBTimeoutError and friends
+                return None
+
+        reply = await asyncio.to_thread(read)
+        if reply and tracing(log):
+            trace(log, "<- %d bytes: %s", len(reply), hexdump(reply))
+        return reply or None

@@ -63,6 +63,10 @@ def build(kind: str, **kwargs: Any) -> Transport:
         from mbprint.transport.usb import USBTransport
 
         return USBTransport(**kwargs)
+    if kind == "bluetooth":
+        from mbprint.transport.bluetooth import BluetoothTransport
+
+        return BluetoothTransport(**kwargs)
     if kind == "tcp":
         from mbprint.transport.tcp import TCPTransport
 
@@ -71,4 +75,4 @@ def build(kind: str, **kwargs: Any) -> Transport:
         from mbprint.transport.file import FileTransport
 
         return FileTransport(**kwargs)
-    raise SystemExit(f"unknown transport {kind!r}; use ble, tcp, serial, usb or file")
+    raise SystemExit(f"unknown transport {kind!r}; use ble, bluetooth, tcp, serial, usb or file")

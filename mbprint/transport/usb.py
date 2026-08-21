@@ -1,13 +1,14 @@
 """Raw USB bulk transport (PM-241, USB-capable M-series, and the Brother QL).
 
-The Brother path is written from the device's descriptors rather than tried: no
-QL has been connected over USB here, so the first print on one is worth
-watching. The network and Bluetooth transports are verified on a QL-1110NWB.
+Printing and status queries are verified on a QL-1110NWB, which exposes a
+64-byte bulk pair on interface 0 and answers a status request with zero-length
+packets until the 32-byte block is ready.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from mbprint.log import get_logger, hexdump, trace, tracing
@@ -73,16 +74,40 @@ class USBTransport(Transport):
         )
         if ep is None:
             raise SystemExit("no bulk OUT endpoint on the USB printer")
-        self._dev, self._ep_out = dev, ep
+        # The IN endpoint is optional: without it, status requests go unanswered
+        # and the caller falls back to the layout's own dimensions.
+        ep_in = usb.util.find_descriptor(
+            intf,
+            custom_match=lambda e: (
+                usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN
+            ),
+        )
+        self._dev, self._ep_out, self._ep_in = dev, ep, ep_in
         log.info(
-            "USB %04x:%04x, bulk OUT 0x%02x, %d-byte packets",
+            "USB %04x:%04x, bulk OUT 0x%02x, %d-byte packets, IN %s",
             dev.idVendor,
             dev.idProduct,
             ep.bEndpointAddress,
             ep.wMaxPacketSize,
+            f"0x{ep_in.bEndpointAddress:02x}" if ep_in is not None else "none",
         )
         # Respect the endpoint's own packet size as the write ceiling.
         self.max_write = min(self.max_write, int(ep.wMaxPacketSize) or self.max_write)
+        # A reply nobody read outlives the process that asked for it, so a stale
+        # status block would otherwise answer the next run's question.
+        if ep_in is not None:
+            await asyncio.to_thread(self._drain)
+
+    def _drain(self) -> None:
+        """Discard anything the previous session left on the IN endpoint."""
+        for _ in range(8):
+            try:
+                stale = bytes(self._ep_in.read(64, 50))
+            except Exception:  # a timeout means there is nothing waiting
+                return
+            if not stale:
+                return
+            log.debug("dropped a stale %d-byte reply: %s", len(stale), hexdump(stale, 32))
 
     async def close(self) -> None:
         if self._dev is not None:
@@ -110,10 +135,21 @@ class USBTransport(Transport):
             return None
 
         def read() -> bytes | None:
-            try:
-                return bytes(self._ep_in.read(64, timeout_ms))
-            except Exception:  # pyusb raises USBTimeoutError and friends
-                return None
+            # A QL answers a status request with zero-length packets until the
+            # block is ready, so poll until the deadline rather than believing
+            # the first empty read.
+            deadline = time.monotonic() + timeout_ms / 1000
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                try:
+                    reply = bytes(self._ep_in.read(64, max(1, int(remaining * 1000))))
+                except Exception:  # pyusb raises USBTimeoutError and friends
+                    return None
+                if reply:
+                    return reply
+                time.sleep(0.05)
 
         reply = await asyncio.to_thread(read)
         if reply and tracing(log):

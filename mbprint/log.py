@@ -25,7 +25,7 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def trace(log: logging.Logger, msg: str, *args) -> None:
+def trace(log: logging.Logger, msg: str, *args: object) -> None:
     """Log at TRACE. Callers should guard expensive arguments with `tracing()`."""
     if log.isEnabledFor(TRACE):
         log.log(TRACE, msg, *args)
@@ -35,7 +35,7 @@ def tracing(log: logging.Logger) -> bool:
     return log.isEnabledFor(TRACE)
 
 
-def hexdump(data: bytes, limit: int = MAX_HEX_BYTES) -> str:
+def hexdump(data: bytes | bytearray, limit: int = MAX_HEX_BYTES) -> str:
     """Compact hex for a byte string, truncated so a raster chunk stays readable."""
     head = bytes(data[:limit]).hex(" ")
     if len(data) > limit:
@@ -59,7 +59,7 @@ def _console_handler(verbosity: int, plain: bool) -> logging.Handler:
         from rich.highlighter import NullHighlighter
         from rich.logging import RichHandler
 
-        handler = RichHandler(
+        handler: logging.Handler = RichHandler(
             console=console,
             # Level color only: repr highlighting mangles hex dumps and model names.
             highlighter=NullHighlighter(),

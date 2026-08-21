@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any, cast
 
 from PIL import Image
 
@@ -38,7 +40,7 @@ class Raster:
         return self.content_width or self.width_bytes * 8
 
 
-def _to_gray(img: Image.Image, gamma: float = 1.3):
+def _to_gray(img: Image.Image, gamma: float = 1.3) -> Image.Image:
     """Perceptual grayscale on white, with gamma lift for thermal midtones."""
     if img.mode != "RGB":
         img = img.convert("RGBA")
@@ -53,6 +55,14 @@ def _to_gray(img: Image.Image, gamma: float = 1.3):
     return gray
 
 
+def _pixels(img: Image.Image) -> Any:
+    """`Image.load()` narrowed: Pillow only returns None for an unloadable image."""
+    px = img.load()
+    if px is None:  # pragma: no cover - defensive
+        raise SystemExit("cannot access image pixels")
+    return px
+
+
 def _floyd_steinberg(gray: Image.Image) -> Image.Image:
     # Pillow's built-in error diffusion is Floyd-Steinberg.
     return gray.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
@@ -60,7 +70,7 @@ def _floyd_steinberg(gray: Image.Image) -> Image.Image:
 
 def _atkinson(gray: Image.Image) -> Image.Image:
     w, h = gray.size
-    buf = [float(v) for v in gray.getdata()]
+    buf = [float(v) for v in cast("Sequence[int]", gray.getdata())]
     out = bytearray(w * h)
     for y in range(h):
         row = y * w
@@ -80,9 +90,9 @@ def _atkinson(gray: Image.Image) -> Image.Image:
 
 def _ordered(gray: Image.Image) -> Image.Image:
     w, h = gray.size
-    src = gray.load()
+    src = _pixels(gray)
     out = Image.new("1", (w, h))
-    dst = out.load()
+    dst = _pixels(out)
     for y in range(h):
         brow = _BAYER4[y & 3]
         for x in range(w):
@@ -131,7 +141,7 @@ def pack(img: Image.Image, dither: str = "auto") -> Raster:
     w, h = bw.size
     width_bytes = (w + 7) // 8
     data = bytearray(width_bytes * h)
-    px = bw.load()
+    px = _pixels(bw)
     for y in range(h):
         base = y * width_bytes
         for x in range(w):
@@ -277,7 +287,7 @@ def pad_rows(raster: Raster, rows: int) -> Raster:
 def to_image(raster: Raster) -> Image.Image:
     """Unpack back to a PIL image, for previewing exactly what gets sent."""
     img = Image.new("1", (raster.width_px, raster.height), 1)
-    px = img.load()
+    px = _pixels(img)
     for y in range(raster.height):
         base = y * raster.width_bytes
         for x in range(raster.width_px):

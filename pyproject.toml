@@ -72,9 +72,13 @@ docstring-code-format = true
 python_version = "3.10"
 files = ["mbprint"]
 strict = true
-# Optional extras: bleak, pyusb, rich and python-barcode may be absent.
-ignore_missing_imports = true
 warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# Optional extras, none of which ship stubs: they may not be installed at all,
+# and an import of anything else staying an error is the point of scoping this.
+module = ["bleak.*", "usb.*", "rich.*", "barcode.*", "serial.*", "qrcode.*"]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # The test suite is not type-checked; it leans on fixtures and duck typing.

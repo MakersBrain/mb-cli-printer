@@ -9,11 +9,15 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
+
+# The config file is free-form JSON: scalars plus the nested `data` table.
+Config = dict[str, Any]
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "mbprint"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
-KNOWN_KEYS = {
+KNOWN_KEYS: dict[str, type] = {
     "model": str,
     "transport": str,
     "address": str,
@@ -37,16 +41,17 @@ KNOWN_KEYS = {
 NESTED_PREFIX = "data."
 
 
-def load() -> dict:
+def load() -> Config:
     try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        loaded: Config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        return loaded
     except FileNotFoundError:
         return {}
     except ValueError as exc:
         raise SystemExit(f"{CONFIG_PATH} is not valid JSON: {exc}")
 
 
-def save(data: dict) -> Path:
+def save(data: Config) -> Path:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     # Scalars sorted for readability; the `data` table keeps insertion order,
     # because derived fields are evaluated in the order they were defined.
@@ -57,13 +62,13 @@ def save(data: dict) -> Path:
     return CONFIG_PATH
 
 
-def data_templates(config: dict | None = None) -> list[tuple[str, str]]:
+def data_templates(config: Config | None = None) -> list[tuple[str, str]]:
     """The `data` table as ordered (key, template) pairs."""
     table = (config if config is not None else load()).get("data") or {}
     return [(k, str(v)) for k, v in table.items()]
 
 
-def set_key(config: dict, key: str, value: str) -> dict:
+def set_key(config: Config, key: str, value: str) -> Config:
     """Set a scalar key, or a `data.<name>` template."""
     if key.startswith(NESTED_PREFIX):
         name = key[len(NESTED_PREFIX) :]
@@ -75,7 +80,7 @@ def set_key(config: dict, key: str, value: str) -> dict:
     return config
 
 
-def unset_key(config: dict, key: str) -> dict:
+def unset_key(config: Config, key: str) -> Config:
     if key.startswith(NESTED_PREFIX):
         config.get("data", {}).pop(key[len(NESTED_PREFIX) :], None)
         if not config.get("data"):
@@ -85,7 +90,7 @@ def unset_key(config: dict, key: str) -> dict:
     return config
 
 
-def flatten(config: dict) -> dict:
+def flatten(config: Config) -> Config:
     """Config as flat `key = value` pairs, `data` included as data.<name>."""
     flat = {k: v for k, v in config.items() if k != "data"}
     for name, template in (config.get("data") or {}).items():
@@ -93,7 +98,7 @@ def flatten(config: dict) -> dict:
     return flat
 
 
-def coerce(key: str, value: str):
+def coerce(key: str, value: str) -> Any:
     kind = KNOWN_KEYS.get(key)
     if kind is None:
         raise SystemExit(

@@ -12,6 +12,9 @@ from mbprint.log import get_logger
 
 log = get_logger(__name__)
 
+# One CSV row plus whatever derived fields were evaluated onto it.
+Record = dict[str, str]
+
 # Default column aliases, in priority order. First header that matches
 # (case-insensitively, ignoring accents/spacing) wins.
 DEFAULT_ALIASES: dict[str, list[str]] = {
@@ -57,7 +60,7 @@ def _format_price(raw: str, decimal_separator: str = ",") -> tuple[str, str]:
 @dataclass
 class RecordSet:
     headers: list[str]
-    records: list[dict]
+    records: list[Record]
     mapping: dict[str, str]
 
 
@@ -86,7 +89,7 @@ def build_mapping(headers: list[str], overrides: dict[str, str] | None = None) -
     return mapping
 
 
-def load_csv(path: str | Path) -> tuple[list[str], list[dict]]:
+def load_csv(path: str | Path) -> tuple[list[str], list[Record]]:
     p = Path(path)
     try:
         text = p.read_text(encoding="utf-8-sig")
@@ -107,7 +110,7 @@ def load_csv(path: str | Path) -> tuple[list[str], list[dict]]:
     return headers, rows
 
 
-def apply_data(record: dict, entries: list[tuple[str, str]], decimal: str = ",") -> dict:
+def apply_data(record: Record, entries: list[tuple[str, str]], decimal: str = ",") -> Record:
     """Evaluate `--data KEY=TEMPLATE` pairs in order, in place.
 
     Order matters: each entry can use the fields defined before it, so
@@ -160,7 +163,7 @@ def build_records(
     return RecordSet(headers=headers, records=records, mapping=mapping)
 
 
-def copies_for(record: dict, copies: int, copies_from: str | None) -> int:
+def copies_for(record: Record, copies: int, copies_from: str | None) -> int:
     """How many times to print one record."""
     if not copies_from:
         return max(1, copies)

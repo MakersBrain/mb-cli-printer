@@ -16,8 +16,11 @@ Every data write is chunked to min(protocol chunk, transport MTU payload).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
+
+from PIL import Image
 
 from mbprint import media as mediamod
 from mbprint import raster as R
@@ -59,6 +62,9 @@ class PrintOptions:
     cut_every: int = 1
     compress: bool = True
     high_quality: bool = True
+
+
+Flow = Callable[[Transport, PrinterDef, R.Raster, PrintOptions, ProgressFn], Awaitable[None]]
 
 
 # --- density mapping -------------------------------------------------------
@@ -114,15 +120,31 @@ M02_PREFIX = bytes([0x10, 0xFF, 0xFE, 0x01])
 
 D_END = bytes([0x1B, 0x64, 0x00])  # print, no feed (gap detect)
 
-M110_SPEED = lambda s: bytes([0x1B, 0x4E, 0x0D, s & 0xFF])  # noqa: E731
-M110_DENSITY = lambda d: bytes([0x1B, 0x4E, 0x04, d & 0xFF])  # noqa: E731
 M110_FOOTER = bytes([0x1F, 0xF0, 0x05, 0x00, 0x1F, 0xF0, 0x03, 0x00])
 
-M04_DENSITY = lambda d: bytes([0x1F, 0x11, 0x02, d & 0xFF])  # noqa: E731
-M04_HEAT = lambda p: bytes([0x1F, 0x11, 0x37, p & 0xFF])  # noqa: E731
 M04_INIT = bytes([0x1F, 0x11, 0x0B])
-M04_COMPRESSION = lambda m: bytes([0x1F, 0x11, 0x35, m & 0xFF])  # noqa: E731
 M04_FEED = bytes([0x1B, 0x64, 0x02])
+
+
+def M110_SPEED(speed: int) -> bytes:
+    return bytes([0x1B, 0x4E, 0x0D, speed & 0xFF])
+
+
+def M110_DENSITY(density: int) -> bytes:
+    return bytes([0x1B, 0x4E, 0x04, density & 0xFF])
+
+
+def M04_DENSITY(density: int) -> bytes:
+    return bytes([0x1F, 0x11, 0x02, density & 0xFF])
+
+
+def M04_HEAT(points: int) -> bytes:
+    return bytes([0x1F, 0x11, 0x37, points & 0xFF])
+
+
+def M04_COMPRESSION(mode: int) -> bytes:
+    return bytes([0x1F, 0x11, 0x35, mode & 0xFF])
+
 
 P12_INIT_SEQUENCE = [
     bytes([0x1F, 0x11, 0x38]),
@@ -195,7 +217,7 @@ BROTHER_STATUS_TYPES = {
 BROTHER_PHASES = {0x00: "waiting to receive", 0x01: "printing"}
 
 
-def brother_parse_status(data: bytes) -> dict:
+def brother_parse_status(data: bytes) -> dict[str, Any]:
     """Decode the 32-byte status block: loaded media, phase and errors."""
     if not data or len(data) < 32:
         raise SystemExit(
@@ -217,7 +239,7 @@ def brother_parse_status(data: bytes) -> dict:
 
 async def brother_query_status(
     transport: Transport, printer: PrinterDef, timeout_ms: int = 3000
-) -> dict:
+) -> dict[str, Any] | None:
     """Ask a QL what media is loaded and whether it is happy."""
     await _cmd(transport, "invalidate", bytes(printer.invalidate_bytes))
     await _cmd(transport, "ESC @ init", INIT)
@@ -329,7 +351,13 @@ def brother_raster_lines(rst: R.Raster, compress: bool) -> bytes:
     return bytes(out)
 
 
-async def _print_brother(transport, printer, rst, opts, on_progress):
+async def _print_brother(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     media = opts.media
     if media is None:
         raise SystemExit("the Brother protocol needs to know the media; pass --media")
@@ -391,7 +419,7 @@ def effective_chunk(printer: PrinterDef, transport: Transport) -> int:
 async def _send_data(
     transport: Transport,
     printer: PrinterDef,
-    data: bytes,
+    data: bytes | bytearray,
     opts: PrintOptions,
     on_progress: ProgressFn,
 ) -> None:
@@ -403,7 +431,7 @@ async def _send_data(
         "-> raster payload: %d bytes in %d chunks of %d, %dms apart", total, count, chunk, delay
     )
     for index, i in enumerate(range(0, total, chunk), 1):
-        piece = data[i : i + chunk]
+        piece = bytes(data[i : i + chunk])
         if tracing(log):
             trace(log, "-> chunk %d/%d @%d: %s", index, count, i, hexdump(piece))
         await transport.send(piece)
@@ -415,7 +443,13 @@ async def _send_data(
 # --- per-protocol flows ----------------------------------------------------
 
 
-async def _print_m_series(transport, printer, rst, opts, on_progress):
+async def _print_m_series(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     await _cmd(transport, "ESC @ init", INIT)
     await transport.delay(100)
     await _cmd(transport, "ESC 7 heat", heat_settings(7, density_to_heat_time(opts.density), 2))
@@ -429,7 +463,13 @@ async def _print_m_series(transport, printer, rst, opts, on_progress):
     await transport.delay(800)
 
 
-async def _print_m02(transport, printer, rst, opts, on_progress):
+async def _print_m02(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     await _cmd(transport, "M02 prefix", M02_PREFIX)
     await transport.delay(50)
     await _cmd(transport, "ESC @ init", INIT)
@@ -444,7 +484,13 @@ async def _print_m02(transport, printer, rst, opts, on_progress):
     await transport.delay(500)
 
 
-async def _print_m04(transport, printer, rst, opts, on_progress):
+async def _print_m04(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     await _cmd(transport, "M04 density", M04_DENSITY(round(opts.density / 8 * 15)))
     await transport.delay(30)
     await _cmd(transport, "M04 heat", M04_HEAT(round(100 + (opts.density - 1) * 50 / 3)))
@@ -462,7 +508,13 @@ async def _print_m04(transport, printer, rst, opts, on_progress):
     await transport.delay(500)
 
 
-async def _print_m110(transport, printer, rst, opts, on_progress):
+async def _print_m110(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     await _cmd(transport, "M110 speed", M110_SPEED(opts.speed))
     await transport.delay(30)
     await _cmd(transport, "M110 density", M110_DENSITY(round(5 + opts.density * 1.25)))
@@ -476,7 +528,13 @@ async def _print_m110(transport, printer, rst, opts, on_progress):
     await transport.delay(500)
 
 
-async def _print_d_series(transport, printer, rst, opts, on_progress):
+async def _print_d_series(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     rot = rst
     if opts.continuous and opts.feed > 0:
         # ESC J is ignored in continuous mode, so bake the feed into the raster:
@@ -496,7 +554,13 @@ async def _print_d_series(transport, printer, rst, opts, on_progress):
     await _cmd(transport, "ESC d 0 print + gap detect", D_END)
 
 
-async def _print_p12(transport, printer, rst, opts, on_progress):
+async def _print_p12(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     rot = rst
     for cmd in P12_INIT_SEQUENCE:
         await _cmd(transport, "P12 init packet", cmd)
@@ -513,7 +577,13 @@ async def _print_p12(transport, printer, rst, opts, on_progress):
     await _cmd(transport, "P12 feed", P12_FEED)
 
 
-async def _print_tspl(transport, printer, rst, opts, on_progress):
+async def _print_tspl(
+    transport: Transport,
+    printer: PrinterDef,
+    rst: R.Raster,
+    opts: PrintOptions,
+    on_progress: ProgressFn,
+) -> None:
     dpmm = 8 * (printer.dpi / 203.0)
     width_mm = round(opts.label_width_mm or rst.width_px / dpmm, 1)
     height_mm = round(opts.label_height_mm or rst.height / dpmm, 1)
@@ -543,7 +613,7 @@ async def _print_tspl(transport, printer, rst, opts, on_progress):
     await _cmd(transport, "TSPL", tspl("END"))
 
 
-_FLOWS = {
+_FLOWS: dict[str, Flow] = {
     "m-series": _print_m_series,
     "m02": _print_m02,
     "m04": _print_m04,
@@ -556,7 +626,7 @@ _FLOWS = {
 
 
 def prepare_raster(
-    img, printer: PrinterDef, opts: PrintOptions | None = None, dither: str = "auto"
+    img: Image.Image, printer: PrinterDef, opts: PrintOptions | None = None, dither: str = "auto"
 ) -> R.Raster:
     """Turn a rendered label image into the exact raster the printer receives.
 
@@ -576,7 +646,7 @@ def prepare_raster(
         if media is None:
             raise SystemExit("the Brother protocol needs to know the media; pass --media")
         margin = media.offset_r + printer.additional_offset_r + opts.offset_x
-        placed = R.place(rst, printer.width_bytes, margin)
+        placed = R.place(rst, printer.width_px // 8, margin)
         log.debug(
             "placed on %s: %d dots from the right edge (%d media + %d model%s), head %d dots",
             media.name,

@@ -4,20 +4,29 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
-from mbprint import __version__, layout, pdf, printers, protocol, ui
+from PIL import Image
+
+from mbprint import __version__, ipp, layout, pdf, printers, protocol, ui
 from mbprint import config as cfg
 from mbprint import data as datamod
 from mbprint import log as mblog
 from mbprint import media as mediamod
 from mbprint import raster as R
+from mbprint.transport import Transport
 from mbprint.transport import build as build_transport
 
 BASE_DPI = 203.0
+
+# Every command takes the parsed argparse namespace; `_pick` reads attributes
+# that only some subparsers define, falling back to the config file.
+Args = argparse.Namespace
 
 log = mblog.get_logger("mbprint.cli")
 
@@ -198,7 +207,7 @@ def add_printer_options(p: argparse.ArgumentParser) -> None:
 # --- resolution helpers ----------------------------------------------------
 
 
-def _pick(args, key, default):
+def _pick(args: Args, key: str, default: Any) -> Any:
     value = getattr(args, key, None)
     if value is not None:
         return value
@@ -206,12 +215,12 @@ def _pick(args, key, default):
     return default if stored is None else stored
 
 
-def _resolve_label(args) -> layout.Label:
+def _resolve_label(args: Args) -> layout.Label:
     path = _pick(args, "label", None) or "label.json"
     return layout.Label.load(path)
 
 
-def _data_entries(args) -> list[tuple[str, str]]:
+def _data_entries(args: Args) -> list[tuple[str, str]]:
     """Field templates: the config `data` table first, then --data / --set."""
     entries = cfg.data_templates()
     if entries:
@@ -219,7 +228,7 @@ def _data_entries(args) -> list[tuple[str, str]]:
     return entries + _pairs(getattr(args, "data", None), "--data")
 
 
-def _resolve_records(args) -> list[dict]:
+def _resolve_records(args: Args) -> list[datamod.Record]:
     entries = _data_entries(args)
     if args.csv:
         rs = datamod.build_records(
@@ -245,7 +254,7 @@ def _resolve_records(args) -> list[dict]:
         datamod.apply_data(record, entries, args.decimal)
         records = [record]
 
-    expanded: list[dict] = []
+    expanded: list[datamod.Record] = []
     for record in records:
         for _ in range(datamod.copies_for(record, args.copies, args.copies_from)):
             expanded.append(record)
@@ -254,7 +263,7 @@ def _resolve_records(args) -> list[dict]:
     return expanded
 
 
-def _check_missing(label: layout.Label, records: list[dict], args) -> None:
+def _check_missing(label: layout.Label, records: list[datamod.Record], args: Args) -> None:
     """Warn about fields no record can fill, and ask before printing them blank."""
     # A field defined explicitly, even as an empty string, is a deliberate choice.
     defined = {k for k, _ in _data_entries(args)}
@@ -302,7 +311,9 @@ def _ask(question: str) -> bool:
         return False
 
 
-def _resolve_media(args, label: layout.Label, printer):
+def _resolve_media(
+    args: Args, label: layout.Label, printer: printers.PrinterDef
+) -> mediamod.Media | None:
     """Which DK roll a Brother job prints on; None for every other family."""
     if printer.protocol != "brother":
         return None
@@ -320,7 +331,9 @@ def _resolve_media(args, label: layout.Label, printer):
     return media
 
 
-def _render_scale(label: layout.Label, printer, media=None) -> float:
+def _render_scale(
+    label: layout.Label, printer: printers.PrinterDef, media: mediamod.Media | None = None
+) -> float:
     """Render straight at the head's resolution instead of upscaling a 203dpi bitmap."""
     if media is not None:
         return mediamod.render_scale(media, label.width_px)
@@ -329,11 +342,21 @@ def _render_scale(label: layout.Label, printer, media=None) -> float:
     return printer.dpi / BASE_DPI * (8.0 / label.dots_per_mm)
 
 
-def _render_all(label: layout.Label, records: list[dict], scale: float = 1.0, decimal: str = ","):
+def _render_all(
+    label: layout.Label,
+    records: list[datamod.Record],
+    scale: float = 1.0,
+    decimal: str = ",",
+) -> list[Image.Image]:
     return [layout.render(label, record, scale=scale, decimal=decimal) for record in records]
 
 
-def _print_options(args, printer, label=None, media=None) -> protocol.PrintOptions:
+def _print_options(
+    args: Args,
+    printer: printers.PrinterDef,
+    label: layout.Label | None = None,
+    media: mediamod.Media | None = None,
+) -> protocol.PrintOptions:
     return protocol.PrintOptions(
         density=int(_pick(args, "density", 6)),
         feed=int(_pick(args, "feed", 32)),
@@ -359,7 +382,7 @@ def _print_options(args, printer, label=None, media=None) -> protocol.PrintOptio
 SIMULATED_MTU = 244
 
 
-def _make_transport(args, printer):
+def _make_transport(args: Args, printer: printers.PrinterDef | None) -> Transport:
     kind = _pick(args, "transport", "ble")
     mtu = args.mtu
     if getattr(args, "dry_run", False):
@@ -396,7 +419,7 @@ def _make_transport(args, printer):
 # --- commands --------------------------------------------------------------
 
 
-def cmd_printers(args) -> int:
+def cmd_printers(args: Args) -> int:
     defs = printers.all_definitions()
     if args.json:
         import json
@@ -418,7 +441,7 @@ def cmd_printers(args) -> int:
     return 0
 
 
-def cmd_scan(args) -> int:
+def cmd_scan(args: Args) -> int:
     from mbprint.transport.ble import scan
 
     found = asyncio.run(scan(args.timeout))
@@ -436,7 +459,7 @@ def cmd_scan(args) -> int:
     return 0
 
 
-def cmd_fields(args) -> int:
+def cmd_fields(args: Args) -> int:
     label = _resolve_label(args)
     optional = [f for f in label.placeholders() if f not in label.placeholders(True)]
     print(
@@ -480,7 +503,7 @@ def cmd_fields(args) -> int:
     return 0
 
 
-def cmd_preview(args) -> int:
+def cmd_preview(args: Args) -> int:
     label = _resolve_label(args)
     records = _resolve_records(args)
     _check_missing(label, records, args)
@@ -519,7 +542,7 @@ def cmd_preview(args) -> int:
     return 0
 
 
-def cmd_pdf(args) -> int:
+def cmd_pdf(args: Args) -> int:
     label = _resolve_label(args)
     records = _resolve_records(args)
     _check_missing(label, records, args)
@@ -555,7 +578,7 @@ def cmd_pdf(args) -> int:
     return 0
 
 
-def cmd_print(args) -> int:
+def cmd_print(args: Args) -> int:
     label = _resolve_label(args)
     records = _resolve_records(args)
     _check_missing(label, records, args)
@@ -640,7 +663,7 @@ def cmd_print(args) -> int:
     return 0
 
 
-def cmd_test(args) -> int:
+def cmd_test(args: Args) -> int:
     printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
 
     async def run() -> None:
@@ -658,7 +681,7 @@ def cmd_test(args) -> int:
     return 0
 
 
-def cmd_status(args) -> int:
+def cmd_status(args: Args) -> int:
     printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
 
     async def run_brother() -> None:
@@ -667,9 +690,32 @@ def cmd_status(args) -> int:
             info = await protocol.brother_query_status(transport, printer)
             print(f"printer: {printer.name} [{printer.id}] via {transport.name}")
             if info is None:
+                # Network QLs stay silent on 9100, but answer IPP on 631.
+                host = getattr(args, "host", None) or cfg.load().get("host")
+                ipp_info = ipp.loaded_media(host) if host else None
+                if ipp_info:
+                    width, length = ipp_info.get("size_mm") or (0, 0)
+                    guess = mediamod.from_size(width, length, printer.id)
+                    print(f"model:   {ipp_info.get('model')} (over IPP)")
+                    print(
+                        f"media:   {ipp_info['keyword']}"
+                        + (
+                            f"  ->  --media {guess.id} ({guess.name})"
+                            if guess
+                            else "  (no entry in the media table)"
+                        )
+                    )
+                    print(f"state:   {ipp_info['state']}")
+                    print(
+                        "issues:  "
+                        + (", ".join(ipp_info["reasons"]) if ipp_info["reasons"] else "none")
+                    )
+                    return
                 print("media:   unknown, the printer sent no status reply")
-                print("         network QLs take print jobs on port 9100 but report "
-                      "status only over USB or Bluetooth;")
+                print(
+                    "         network QLs take print jobs on port 9100 but report "
+                    "status only over USB, Bluetooth or IPP on port 631;"
+                )
                 print("         pass --media to say which roll is loaded")
                 return
             media_mm = info["media_width_mm"]
@@ -688,8 +734,11 @@ def cmd_status(args) -> int:
         return 0
 
     async def run() -> None:
+        from mbprint.transport.ble import BLETransport
+
         transport = _make_transport(args, None)
-        if transport.name != "ble":
+        # Only BLE carries the notify channel these queries are answered on.
+        if not isinstance(transport, BLETransport):
             raise SystemExit("status queries need the BLE or TCP transport")
         async with transport:
             print(f"device: {transport.resolved_name} [{transport.address}]")
@@ -705,7 +754,7 @@ def cmd_status(args) -> int:
     return 0
 
 
-def cmd_config(args) -> int:
+def cmd_config(args: Args) -> int:
     data = cfg.load()
     flat = cfg.flatten(data)
     if args.action == "list":
@@ -840,7 +889,7 @@ def main(argv: list[str] | None = None) -> int:
         getattr(args, "log_file", None),
         getattr(args, "plain", False),
     )
-    if log.isEnabledFor(mblog.logging.DEBUG):
+    if log.isEnabledFor(logging.DEBUG):
         given = {
             k: v
             for k, v in sorted(vars(args).items())
@@ -853,7 +902,8 @@ def main(argv: list[str] | None = None) -> int:
             " ".join(f"{k}={v!r}" for k, v in given.items()),
         )
     try:
-        return args.func(args)
+        code: int = args.func(args)
+        return code
     except KeyboardInterrupt:
         log.warning("interrupted")
         return 130

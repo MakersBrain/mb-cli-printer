@@ -10,6 +10,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from mbprint.log import get_logger
 
@@ -21,7 +22,7 @@ USER_DEFS = (
 )
 
 # Fallback when nothing matches: the widest common M-series geometry.
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "id": "generic",
     "name": "Generic M-series",
     "protocol": "m-series",
@@ -76,7 +77,7 @@ class PrinterDef:
 
     @property
     def width_px(self) -> int:
-        return (self.width_bytes or DEFAULT_CONFIG["widthBytes"]) * 8
+        return int(self.width_bytes or DEFAULT_CONFIG["widthBytes"]) * 8
 
     @property
     def chunk_size(self) -> int:
@@ -87,7 +88,7 @@ class PrinterDef:
         return PROTOCOL_CHUNK_DELAY.get(self.protocol, DEFAULT_CHUNK_DELAY_MS)
 
     @classmethod
-    def from_json(cls, d: dict) -> PrinterDef:
+    def from_json(cls, d: dict[str, Any]) -> PrinterDef:
         return cls(
             id=d["id"],
             name=d.get("name", d["id"]),
@@ -109,10 +110,11 @@ class PrinterDef:
         )
 
 
-def _load(path: Path) -> list[dict]:
+def _load(path: Path) -> list[dict[str, Any]]:
     try:
         with path.open(encoding="utf-8") as fh:
-            return json.load(fh).get("printers", [])
+            printers: list[dict[str, Any]] = json.load(fh).get("printers", [])
+            return printers
     except FileNotFoundError:
         return []
     except (OSError, ValueError) as exc:
@@ -172,7 +174,7 @@ def resolve(model: str | None = None, device_name: str | None = None) -> Printer
         "device name %r matches no known model; falling back to a generic %dpx %s "
         "head, which will misprint on most printers",
         device_name or "(unknown)",
-        DEFAULT_CONFIG["widthBytes"] * 8,
+        int(DEFAULT_CONFIG["widthBytes"]) * 8,
         DEFAULT_CONFIG["protocol"],
     )
     log.warning("pass --model MODEL, or run: mbprint config set model MODEL")

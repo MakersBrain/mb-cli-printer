@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 from PIL import Image, ImageDraw, ImageFont
@@ -27,6 +28,12 @@ from PIL import Image, ImageDraw, ImageFont
 from mbprint.log import get_logger
 
 log = get_logger(__name__)
+
+# A record is the flat {field: value} map a template renders against; an element
+# is one entry of a label.json `elements` array, whose keys vary by type.
+Record = dict[str, str]
+Element = dict[str, Any]
+Font = ImageFont.FreeTypeFont | ImageFont.ImageFont
 
 BASE_DPI = 203.0
 FIELD_PATTERN = re.compile(r"\{\{([^}]+)\}\}")
@@ -117,7 +124,9 @@ def _font_path(family: str, bold: bool, italic: bool) -> str | None:
 
 
 @lru_cache(maxsize=512)
-def _load_font(family: str, bold: bool, italic: bool, size: int):
+def _load_font(
+    family: str, bold: bool, italic: bool, size: int
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     path = _font_path(family, bold, italic)
     if not path:
         log.warning(
@@ -181,6 +190,12 @@ def _f_slug(value: str) -> str:
 
 # Template filters. Each takes the current value and returns the next one; the
 # signature is (value, arg, decimal) so every filter sees the same context.
+def _f_replace(value: str, arg: str, _decimal: str) -> str:
+    """`replace:a:b`; a missing second half deletes the match."""
+    old, _, new = arg.partition(":")
+    return value.replace(old, new)
+
+
 FILTERS: dict[str, Callable[[str, str, str], str]] = {
     "upper": lambda v, a, d: v.upper(),
     "lower": lambda v, a, d: v.lower(),
@@ -192,7 +207,7 @@ FILTERS: dict[str, Callable[[str, str, str], str]] = {
     "num": _f_num,
     "slug": lambda v, a, d: _f_slug(v),
     "urlencode": lambda v, a, d: quote(v, safe=""),
-    "replace": lambda v, a, d: v.replace(*[*a.split(":", 1), ""][:2]),
+    "replace": _f_replace,
 }
 
 
@@ -207,7 +222,7 @@ def apply_filters(value: str, filters: list[tuple[str, str]], decimal: str = ","
     return value
 
 
-def substitute(text: str, record: dict, decimal: str = ",") -> str:
+def substitute(text: str, record: Record, decimal: str = ",") -> str:
     """Render a template against a record.
 
     `{{field}}` is replaced from the record, optionally through a pipeline of
@@ -217,7 +232,7 @@ def substitute(text: str, record: dict, decimal: str = ",") -> str:
     """
 
     def sub_fields(s: str) -> str:
-        def one(match: re.Match) -> str:
+        def one(match: re.Match[str]) -> str:
             name, filters = _parse_placeholder(match.group(1))
             if name not in record and not any(f == "default" for f, _ in filters):
                 return match.group(0)
@@ -225,7 +240,7 @@ def substitute(text: str, record: dict, decimal: str = ",") -> str:
 
         return FIELD_PATTERN.sub(one, s)
 
-    def sub_optional(m: re.Match) -> str:
+    def sub_optional(m: re.Match[str]) -> str:
         inner = m.group(1)
         names = [_parse_placeholder(n)[0] for n in FIELD_PATTERN.findall(inner)]
         if names and all(str(record.get(n, "")).strip() == "" for n in names):
@@ -253,7 +268,7 @@ def template_fields(text: str, required_only: bool = False) -> list[str]:
     return seen
 
 
-def missing_fields(text: str, record: dict) -> list[str]:
+def missing_fields(text: str, record: Record) -> list[str]:
     """Required placeholders in `text` that this record leaves empty.
 
     A placeholder carrying a `default:` filter always has a value, so it never
@@ -281,8 +296,8 @@ class Label:
     round: bool = False
     continuous: bool = False
     name: str = ""
-    elements: list[dict] = field(default_factory=list)
-    fields: list[dict] = field(default_factory=list)
+    elements: list[Element] = field(default_factory=list)
+    fields: list[Element] = field(default_factory=list)
     source: Path | None = None
 
     @property
@@ -310,7 +325,7 @@ class Label:
                     seen.append(name)
         return seen
 
-    def missing_for(self, record: dict) -> list[str]:
+    def missing_for(self, record: Record) -> list[str]:
         """Required placeholders this record cannot fill."""
         seen: list[str] = []
         for text in self.templates():
@@ -357,7 +372,7 @@ class Label:
 # --- element rendering -----------------------------------------------------
 
 
-def _norm_text_style(el: dict) -> tuple[str, bool, bool, bool]:
+def _norm_text_style(el: Element) -> tuple[str, bool, bool, bool]:
     """(family, bold, italic, underline), accepting both the compact export
     keys (font/bold/italic) and the full designer keys (fontFamily/fontWeight)."""
     family = _family_of(el.get("fontFamily") or el.get("font"))
@@ -367,7 +382,7 @@ def _norm_text_style(el: dict) -> tuple[str, bool, bool, bool]:
     return family, bold, italic, underline
 
 
-def _wrap(draw, text: str, font, max_width: float) -> list[str]:
+def _wrap(draw: ImageDraw.ImageDraw, text: str, font: Font, max_width: float) -> list[str]:
     lines: list[str] = []
     for paragraph in text.split("\n"):
         words = paragraph.split(" ")
@@ -384,8 +399,8 @@ def _wrap(draw, text: str, font, max_width: float) -> list[str]:
 
 
 def _auto_scale_size(
-    draw,
-    el: dict,
+    draw: ImageDraw.ImageDraw,
+    el: Element,
     text: str,
     w: float,
     h: float,
@@ -407,7 +422,7 @@ def _auto_scale_size(
 
 
 def _render_text(
-    layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float, scale: float
+    layer: Image.Image, el: Element, w: float, h: float, ox: float, oy: float, scale: float
 ) -> None:
     text = el.get("text") or ""
     draw = ImageDraw.Draw(layer)
@@ -457,6 +472,14 @@ def _render_text(
         y += line_height
 
 
+def _pixels(img: Image.Image) -> Any:
+    """`Image.load()` narrowed: Pillow only returns None for an unloadable image."""
+    px = img.load()
+    if px is None:  # pragma: no cover - defensive
+        raise SystemExit("cannot access image pixels")
+    return px
+
+
 def _decode_data_uri(uri: str) -> bytes:
     if uri.startswith("data:"):
         _, _, payload = uri.partition(",")
@@ -466,17 +489,19 @@ def _decode_data_uri(uri: str) -> bytes:
     return Path(uri).read_bytes()
 
 
-def _render_image(layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float) -> None:
+def _render_image(
+    layer: Image.Image, el: Element, w: float, h: float, ox: float, oy: float
+) -> None:
     uri = el.get("imageData") or el.get("src")
     if not uri:
         return
     try:
         raw = _decode_data_uri(uri)
-        img = Image.open(io.BytesIO(raw))
+        img: Image.Image = Image.open(io.BytesIO(raw))
         img.load()
     except (OSError, ValueError, binascii.Error) as exc:
         raise SystemExit(f"cannot decode image element {el.get('id', '?')}: {exc}")
-    img = img.convert("RGBA").resize((max(1, round(w)), max(1, round(h))), Image.LANCZOS)
+    img = img.convert("RGBA").resize((max(1, round(w)), max(1, round(h))), Image.Resampling.LANCZOS)
     brightness = el.get("brightness") or 0
     contrast = el.get("contrast") or 0
     if brightness or contrast:
@@ -491,7 +516,7 @@ def _render_image(layer: Image.Image, el: dict, w: float, h: float, ox: float, o
     layer.alpha_composite(img, (round(ox), round(oy)))
 
 
-def _render_qr(layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float) -> None:
+def _render_qr(layer: Image.Image, el: Element, w: float, h: float, ox: float, oy: float) -> None:
     data = (el.get("qrData") or "").strip()
     if not data:
         return
@@ -517,18 +542,20 @@ def _render_qr(layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: 
     # Draw one pixel per module, then scale to the size set in the editor. Nearest
     # neighbour keeps the modules hard-edged; the box fills exactly as designed.
     grid = Image.new("1", (n, n), 1)
-    px = grid.load()
+    px = _pixels(grid)
     for y, row in enumerate(modules):
         for x, dark in enumerate(row):
             if dark:
                 px[x, y] = 0
-    rendered = grid.resize((side, side), Image.NEAREST).convert("RGBA")
+    rendered = grid.resize((side, side), Image.Resampling.NEAREST).convert("RGBA")
     dx = ox + (w - side) / 2
     dy = oy + (h - side) / 2
     layer.alpha_composite(rendered, (round(dx), round(dy)))
 
 
-def _render_barcode(layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float) -> None:
+def _render_barcode(
+    layer: Image.Image, el: Element, w: float, h: float, ox: float, oy: float
+) -> None:
     data = (el.get("barcodeData") or "").strip()
     if not data:
         return
@@ -556,12 +583,12 @@ def _render_barcode(layer: Image.Image, el: dict, w: float, h: float, ox: float,
     )
     buf.seek(0)
     img = Image.open(buf).convert("RGBA")
-    img = img.resize((max(1, round(w)), max(1, round(h))), Image.LANCZOS)
+    img = img.resize((max(1, round(w)), max(1, round(h))), Image.Resampling.LANCZOS)
     layer.alpha_composite(img, (round(ox), round(oy)))
 
 
 def _render_shape(
-    layer: Image.Image, el: dict, w: float, h: float, ox: float, oy: float, scale: float
+    layer: Image.Image, el: Element, w: float, h: float, ox: float, oy: float, scale: float
 ) -> None:
     draw = ImageDraw.Draw(layer)
     shape = el.get("shapeType") or el.get("shape") or "rectangle"
@@ -582,7 +609,7 @@ def _render_shape(
 
 
 def render(
-    label: Label, record: dict | None = None, scale: float = 1.0, decimal: str = ","
+    label: Label, record: Record | None = None, scale: float = 1.0, decimal: str = ","
 ) -> Image.Image:
     """Render one label to an RGB image. `scale` > 1 renders for higher-dpi heads."""
     record = record or {}
@@ -626,7 +653,7 @@ def render(
         cx, cy = ex + ew / 2, ey + eh / 2
         if rotation:
             # Canvas rotates clockwise for positive degrees; PIL rotates the other way.
-            layer = layer.rotate(-rotation, resample=Image.BICUBIC, expand=True)
+            layer = layer.rotate(-rotation, resample=Image.Resampling.BICUBIC, expand=True)
         canvas.alpha_composite(layer, (round(cx - layer.width / 2), round(cy - layer.height / 2)))
 
     if label.round:

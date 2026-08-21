@@ -63,6 +63,10 @@ ALL_MEDIA: tuple[Media, ...] = (
     Media("23x23", 23, 23, DIE_CUT, (272, 272), (202, 202), 42),
     Media("29x42", 29, 42, DIE_CUT, (342, 495), (306, 425), 6),
     Media("29x90", 29, 90, DIE_CUT, (342, 1061), (306, 991), 6),
+    # DK-1209. Not in the brother_ql table; derived from the other 29mm rolls,
+    # which share a 342/306 dot width and a 6 dot right offset, and whose
+    # printable length runs 70 dots short of the tape (62mm x 11.811 = 732).
+    Media("29x62", 29, 62, DIE_CUT, (342, 732), (306, 662), 6),
     Media("39x90", 38, 90, DIE_CUT, (449, 1061), (413, 991), 12),
     Media("39x48", 39, 48, DIE_CUT, (461, 565), (425, 495), 6),
     Media("52x29", 52, 29, DIE_CUT, (614, 341), (578, 271), 0),
@@ -81,6 +85,14 @@ ALL_MEDIA: tuple[Media, ...] = (
 
 # Media type byte for the print-information command.
 MEDIA_TYPE_BYTE = {DIE_CUT: 0x0B, ROUND_DIE_CUT: 0x0B, ENDLESS: 0x0A}
+
+
+def from_size(width_mm: float, length_mm: float, printer_id: str) -> Media | None:
+    """Exact lookup by physical size, as reported by the printer itself."""
+    for m in for_printer(printer_id):
+        if abs(m.width_mm - width_mm) < 0.6 and abs(m.length_mm - length_mm) < 0.6:
+            return m
+    return None
 
 
 def by_id(media_id: str) -> Media | None:
@@ -157,7 +169,7 @@ def fit(img: Image.Image, media: Media, min_rows: int = 0) -> Image.Image:
     if media.continuous:
         if img.width != printable_w:
             height = max(1, round(img.height * printable_w / img.width))
-            img = img.resize((printable_w, height), Image.LANCZOS)
+            img = img.resize((printable_w, height), Image.Resampling.LANCZOS)
         if min_rows and img.height < min_rows:
             padded = Image.new("RGB", (printable_w, min_rows), "white")
             padded.paste(img.convert("RGB"), (0, 0))
@@ -166,7 +178,8 @@ def fit(img: Image.Image, media: Media, min_rows: int = 0) -> Image.Image:
 
     scale = min(printable_w / img.width, printable_h / img.height)
     sized = img.resize(
-        (max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS
+        (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+        Image.Resampling.LANCZOS,
     )
     canvas = Image.new("RGB", (printable_w, printable_h), "white")
     canvas.paste(

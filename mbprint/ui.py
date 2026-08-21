@@ -13,8 +13,12 @@ from __future__ import annotations
 
 import os
 import sys
+from types import TracebackType
+from typing import Any, TypeVar
 
-_console = None
+ProgressT = TypeVar("ProgressT", bound="Progress")
+
+_console: Any = None
 _console_checked = False
 
 
@@ -36,7 +40,7 @@ def color_enabled(plain: bool = False) -> bool:
     return rich_available()
 
 
-def console(plain: bool = False):
+def console(plain: bool = False) -> Any:
     """The one stderr Console shared by the log handler and the progress bar."""
     global _console, _console_checked
     if not _console_checked:
@@ -73,18 +77,23 @@ class Progress:
     def stop(self) -> None:
         pass
 
-    def __enter__(self):
+    def __enter__(self: ProgressT) -> ProgressT:
         self.start()
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.stop()
 
 
 class PlainProgress(Progress):
     """One rewritten line on stderr, for terminals without rich."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._index = 0
         self._total = 0
         self._name = ""
@@ -108,13 +117,13 @@ class PlainProgress(Progress):
         print(f"\r[{self._index}/{self._total}] {self._name}: done      ", file=sys.stderr)
 
 
-def _AmountColumn():
+def _AmountColumn() -> Any:
     """Labels count as `7/22`, the in-flight transfer as `62%`."""
     from rich.progress import ProgressColumn
     from rich.text import Text
 
     class AmountColumn(ProgressColumn):
-        def render(self, task):
+        def render(self, task: Any) -> Any:
             if task.fields.get("unit") == "percent":
                 return Text(f"{task.percentage:>3.0f}%", style="green")
             return Text(f"{int(task.completed)}/{int(task.total or 0)}", style="green")
@@ -139,8 +148,8 @@ class RichProgress(Progress):
             console=console(plain),
             transient=False,
         )
-        self._labels = None
-        self._current = None
+        self._labels: Any = None
+        self._current: Any = None
 
     def start(self) -> None:
         self._progress.start()

@@ -199,8 +199,21 @@ def _face_keys(family: str, style: str, path: Path) -> tuple[str, ...]:
     """
     keys = [_font_key(family)]
     stem, style_key = _font_key(path.stem), _font_key(style)
-    if style_key and stem.endswith(style_key):
-        stem = stem[: -len(style_key)]
+    suffixes = (
+        style_key,
+        "bolditalic",
+        "boldoblique",
+        "semibolditalic",
+        "semibold",
+        "regular",
+        "italic",
+        "oblique",
+        "bold",
+    )
+    for suffix in suffixes:
+        if suffix and stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
     if stem and stem not in keys:
         keys.append(stem)
     return tuple(keys)

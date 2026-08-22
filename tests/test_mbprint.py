@@ -127,6 +127,12 @@ def test_phomymo_css_font_stack_uses_exact_primary_family():
     assert (family, bold, italic, underline) == ("Open Sans", True, True, False)
 
 
+def test_nerd_font_filename_alias_does_not_depend_on_freetype_style_name():
+    keys = layout._face_keys("JetBrainsMono NF", "Book", Path("JetBrainsMonoNerdFont-Regular.ttf"))
+    assert "jetbrainsmononf" in keys
+    assert "jetbrainsmononerdfont" in keys
+
+
 def test_variable_font_exposes_regular_and_bold_faces(tmp_path):
     system_path = layout._fontconfig_path("Inter", False, False, exact=True)
     if system_path is None:

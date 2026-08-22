@@ -48,6 +48,12 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# `packages/` is a separately-published distribution with its own pyproject and
+# its own ruff settings; ruff would pick those up per-directory anyway, but
+# excluding it here keeps a run from the repository root meaning one thing.
+# `decompiled/` and `apk/` are vendored third-party artefacts, gitignored and
+# never edited by hand.
+extend-exclude = ["packages", "decompiled", "apk", ".venv"]
 
 [tool.ruff.lint]
 select = [
@@ -72,15 +78,33 @@ ignore = [
 [tool.ruff.format]
 docstring-code-format = true
 
+# Strict, and blocking. Unlike a repository where the framework ships no stubs,
+# everything here is ordinary Python with typed dependencies, so a green run
+# actually certifies something and there is no advisory lane.
+#
+# `files` is the package only: the extras' shims and the test suite are handled
+# by the overrides below.
 [tool.mypy]
 python_version = "3.10"
 files = ["mbprint"]
 strict = true
 warn_unreachable = true
+warn_redundant_casts = true
+exclude = [
+    "^packages/",
+    "^decompiled/",
+    "^\\.venv/",
+]
 
 [[tool.mypy.overrides]]
 # Optional extras, none of which ship stubs: they may not be installed at all,
 # and an import of anything else staying an error is the point of scoping this.
+#
+# Because a missing extra silently becomes `Any` here, mypy must be run with
+# every extra installed or it checks less than CI does — `rich` in particular
+# does ship `py.typed`, so leaving it out turns two real subclass checks into
+# `Any` and produces errors that CI never sees. `make typecheck` passes
+# `--all-extras` for exactly that reason.
 module = [
     "bleak.*",
     "usb.*",

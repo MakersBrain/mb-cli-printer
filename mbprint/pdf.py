@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -14,6 +16,94 @@ PAGE_SIZES_MM = {
     "letter": (215.9, 279.4),
     "legal": (215.9, 355.6),
 }
+
+
+@dataclass(frozen=True)
+class RenderedPage:
+    number: int
+    width_mm: float
+    height_mm: float
+    image: Image.Image
+
+
+def page_indices(spec: str | None, count: int) -> list[int]:
+    """Parse one-based PDF page numbers/ranges into zero-based indices."""
+    if count < 1:
+        raise SystemExit("the PDF has no pages")
+    if not spec:
+        return list(range(count))
+    selected: list[int] = []
+    for token in spec.split(","):
+        token = token.strip()
+        try:
+            if "-" in token:
+                first_text, last_text = token.split("-", 1)
+                first, last = int(first_text), int(last_text)
+                if last < first:
+                    raise ValueError
+                numbers: Iterable[int] = range(first, last + 1)
+            else:
+                numbers = [int(token)]
+        except ValueError:
+            raise SystemExit(f"invalid page selection {spec!r}; use values like 1,3-5")
+        for number in numbers:
+            if not 1 <= number <= count:
+                raise SystemExit(f"PDF page {number} is outside the available range 1-{count}")
+            index = number - 1
+            if index not in selected:
+                selected.append(index)
+    if not selected:
+        raise SystemExit("no PDF pages selected")
+    return selected
+
+
+def render_pages(
+    path: str | Path, dpi: int, pages: str | None = None, password: str | None = None
+) -> list[RenderedPage]:
+    """Rasterize selected PDF pages at printer resolution on a white background."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        raise SystemExit("PDF printing needs pypdfium2: pip install pypdfium2")
+
+    source = Path(path)
+    if not source.is_file():
+        raise SystemExit(f"PDF not found: {source}")
+    if dpi <= 0:
+        raise SystemExit("PDF render DPI must be positive")
+    try:
+        document = pdfium.PdfDocument(source, password=password)
+    except Exception as exc:
+        raise SystemExit(f"cannot open PDF {source}: {exc}")
+
+    rendered: list[RenderedPage] = []
+    try:
+        for index in page_indices(pages, len(document)):
+            page = document[index]
+            try:
+                width_pt, height_pt = page.get_size()
+                bitmap = page.render(scale=dpi / 72.0, fill_color=(255, 255, 255, 255))
+                try:
+                    image = bitmap.to_pil().convert("RGB").copy()
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
+            rendered.append(
+                RenderedPage(
+                    number=index + 1,
+                    width_mm=float(width_pt) * MM_PER_INCH / 72.0,
+                    height_mm=float(height_pt) * MM_PER_INCH / 72.0,
+                    image=image,
+                )
+            )
+    except SystemExit:
+        raise
+    except Exception as exc:
+        raise SystemExit(f"cannot render PDF {source}: {exc}")
+    finally:
+        document.close()
+    return rendered
 
 
 def _dpi(dots_per_mm: float) -> float:

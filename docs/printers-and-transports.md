@@ -163,12 +163,20 @@ mbprint print -l label.json -c inventory.csv \
 # USB
 mbprint print -l label.json -c inventory.csv \
   --model ql-1110nwb -t usb
+
+# Existing PDF, one page per label
+mbprint print-pdf labels.pdf --model ql-1110nwb -t usb
+
+# The same direct PDF flow on a Phomemo M110
+mbprint print-pdf labels.pdf --model m110 -t usb
 ```
 
 `--media` is optional. Bluetooth, serial, and USB use the printer's raster
 status block to identify the roll. TCP printing uses IPP on port 631 for status
 because port 9100 does not return it. If no status is available, media is
 inferred from the layout dimensions.
+For `print-pdf`, it is inferred from the PDF page dimensions. A page-size
+mismatch is rejected before printing unless `--fit` is supplied explicitly.
 
 | IDs | Roll type |
 |---|---|

@@ -281,6 +281,115 @@ def test_pdf_sheet_tiles_labels(tmp_path):
     assert out.exists() and out.stat().st_size > 0
 
 
+def test_pdf_page_selection_and_native_dpi_rendering(tmp_path):
+    source = pdf.write_labels(
+        [Image.new("RGB", (300, 200), "white"), Image.new("RGB", (300, 200), "black")],
+        tmp_path / "labels.pdf",
+        dots_per_mm=10,
+    )
+    pages = pdf.render_pages(source, dpi=300, pages="2")
+    assert [(page.number, round(page.width_mm), round(page.height_mm)) for page in pages] == [
+        (2, 30, 20)
+    ]
+    assert pages[0].image.size == (355, 237)
+    assert pages[0].image.getextrema() == ((0, 0), (0, 0), (0, 0))
+
+
+def test_pdf_page_range_parser_validates_and_deduplicates():
+    assert pdf.page_indices("1,3-5,3", 5) == [0, 2, 3, 4]
+    with pytest.raises(SystemExit, match="outside the available range"):
+        pdf.page_indices("6", 5)
+    with pytest.raises(SystemExit, match="invalid page selection"):
+        pdf.page_indices("3-1", 5)
+
+
+def test_print_pdf_dry_run_uses_existing_brother_pipeline(tmp_path):
+    from mbprint import cli
+
+    source = pdf.write_labels(
+        [Image.new("RGB", (620, 290), "white")],
+        tmp_path / "label.pdf",
+        dots_per_mm=10,
+    )
+    capture = tmp_path / "job.bin"
+    result = cli.main(
+        [
+            "print-pdf",
+            str(source),
+            "--model",
+            "ql-1110nwb",
+            "--media",
+            "62x29",
+            "--dry-run",
+            "--out",
+            str(capture),
+            "--chunk-delay",
+            "0",
+            "--plain",
+        ]
+    )
+    assert result == 0
+    stream = capture.read_bytes()
+    assert stream.startswith(b"\x1bia")  # Brother raster mode
+    assert b"\x1biz" in stream  # Brother print-information command
+
+
+def test_print_pdf_dry_run_uses_existing_phomemo_pipeline(tmp_path):
+    from mbprint import cli
+
+    source = pdf.write_labels(
+        [Image.new("RGB", (400, 300), "white")],
+        tmp_path / "phomemo-label.pdf",
+        dots_per_mm=10,
+    )
+    capture = tmp_path / "phomemo-job.bin"
+    result = cli.main(
+        [
+            "print-pdf",
+            str(source),
+            "--model",
+            "m110",
+            "--dry-run",
+            "--out",
+            str(capture),
+            "--chunk-delay",
+            "0",
+            "--plain",
+        ]
+    )
+    assert result == 0
+    stream = capture.read_bytes()
+    assert stream.startswith(protocol.M110_SPEED(5))
+    assert b"\x1dv0\x00" in stream  # GS v 0 raster command
+
+
+def test_print_pdf_parser_accepts_pages_and_copies():
+    from mbprint import cli
+
+    args = cli.build_parser().parse_args(
+        ["print-pdf", "labels.pdf", "--pages", "2-4", "--copies", "3"]
+    )
+    assert args.pdf_file == "labels.pdf"
+    assert args.pages == "2-4"
+    assert args.copies == 3
+
+
+def test_print_pdf_validates_brother_media_and_rotates_transposed_page():
+    from mbprint import cli
+    from mbprint import media as M
+
+    printer = printers.by_id("ql-1110nwb")
+    media = M.by_id("62x29")
+    assert media is not None
+    transposed = pdf.RenderedPage(1, 29, 62, Image.new("RGB", (290, 620), "white"))
+    fitted = cli._pdf_page_on_media(transposed, media, printer, allow_fit=False)
+    assert fitted.size == media.dots_printable
+
+    wrong = pdf.RenderedPage(1, 40, 30, Image.new("RGB", (400, 300), "white"))
+    with pytest.raises(SystemExit, match="correctly sized PDF or pass --fit"):
+        cli._pdf_page_on_media(wrong, media, printer, allow_fit=False)
+
+
 # --- logging and tracing ---------------------------------------------------
 
 

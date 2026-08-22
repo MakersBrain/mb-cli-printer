@@ -54,6 +54,13 @@ def _kv(values: list[str] | None, flag: str) -> dict[str, str]:
     return out
 
 
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
+
+
 # --- shared option groups --------------------------------------------------
 
 
@@ -391,12 +398,20 @@ def _resolve_media(
     args: Args, label: layout.Label, printer: printers.PrinterDef
 ) -> mediamod.Media | None:
     """Which DK roll a Brother job prints on; None for every other family."""
+    return _resolve_media_size(args, label.width_mm, label.height_mm, printer)
+
+
+def _resolve_media_size(
+    args: Args, width_mm: float, height_mm: float, printer: printers.PrinterDef
+) -> mediamod.Media | None:
+    """Resolve Brother media from an arbitrary physical page size."""
     if printer.protocol != "brother":
         return None
     explicit = _pick(args, "media", None)
-    media = (mediamod.by_id(explicit) if explicit else None) or _printer_media(args, printer)
+    media = mediamod.resolve(explicit, width_mm, height_mm, printer.id) if explicit else None
+    media = media or _printer_media(args, printer)
     if media is None:
-        media = mediamod.resolve(explicit, label.width_mm, label.height_mm, printer.id)
+        media = mediamod.resolve(None, width_mm, height_mm, printer.id)
     log.info(
         "media: %s (%s), printable %dx%s dots, %d dots right margin",
         media.id,
@@ -694,6 +709,23 @@ def cmd_print(args: Args) -> int:
             img = mediamod.fit(img, media, printer.min_rows)
         rasters.append(protocol.prepare_raster(img, printer, opts, dither))
 
+    label_ids = [
+        record.get("ref") or record.get("sku") or str(i) for i, record in enumerate(records, 1)
+    ]
+    return _send_rasters(args, printer, opts, rasters, label_ids, dither)
+
+
+def _send_rasters(
+    args: Args,
+    printer: printers.PrinterDef,
+    opts: protocol.PrintOptions,
+    rasters: list[R.Raster],
+    label_ids: list[str],
+    dither: str,
+) -> int:
+    """Send already prepared labels through the common transport/progress flow."""
+    if not rasters:
+        raise SystemExit("nothing to print")
     log.info(
         "printer: %s [%s] %s %ddpi head=%s%s",
         printer.name,
@@ -733,8 +765,7 @@ def cmd_print(args: Args) -> int:
             show_bar = not args.quiet and not args.verbose
             with ui.progress(len(rasters), show_bar, args.plain) as bar:
                 for i, rst in enumerate(rasters, 1):
-                    record = records[i - 1]
-                    label_id = record.get("ref") or record.get("sku") or str(i)
+                    label_id = label_ids[i - 1]
                     log.debug("label %d/%d: %s", i, len(rasters), label_id)
                     bar.label(i, len(rasters), label_id)
                     await protocol.print_raster(transport, printer, rst, opts, bar.chunk)
@@ -760,6 +791,73 @@ def cmd_print(args: Args) -> int:
 
     asyncio.run(run())
     return 0
+
+
+def _pdf_page_on_media(
+    page: pdf.RenderedPage, media: mediamod.Media, printer: printers.PrinterDef, allow_fit: bool
+) -> Image.Image:
+    """Validate page geometry, auto-rotate a transposed page, then fit printable margins."""
+    tolerance = 1.5
+    width, height = page.width_mm, page.height_mm
+    direct = abs(width - media.width_mm) <= tolerance and (
+        media.continuous or abs(height - media.length_mm) <= tolerance
+    )
+    transposed = abs(height - media.width_mm) <= tolerance and (
+        media.continuous or abs(width - media.length_mm) <= tolerance
+    )
+    image = page.image
+    if not direct and transposed:
+        image = image.transpose(Image.Transpose.ROTATE_90)
+        direct = True
+    if not direct and not allow_fit:
+        expected = (
+            f"{media.width_mm:g}mm wide"
+            if media.continuous
+            else f"{media.width_mm:g}x{media.length_mm:g}mm"
+        )
+        raise SystemExit(
+            f"PDF page {page.number} is {width:.2f}x{height:.2f}mm, but {media.id} media is "
+            f"{expected}; use a correctly sized PDF or pass --fit"
+        )
+    return mediamod.fit(image, media, printer.min_rows)
+
+
+def cmd_print_pdf(args: Args) -> int:
+    """Rasterize an exact-size PDF and print each selected page as one label."""
+    printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
+    pages = pdf.render_pages(args.pdf_file, printer.dpi, args.pages)
+    first = pages[0]
+    for page in pages[1:]:
+        if abs(page.width_mm - first.width_mm) > 0.5 or abs(page.height_mm - first.height_mm) > 0.5:
+            raise SystemExit(
+                f"PDF pages must have one label size; page 1 is "
+                f"{first.width_mm:.2f}x{first.height_mm:.2f}mm and page {page.number} is "
+                f"{page.width_mm:.2f}x{page.height_mm:.2f}mm"
+            )
+    media = _resolve_media_size(args, first.width_mm, first.height_mm, printer)
+    opts = _print_options(args, printer, media=media)
+    opts.label_width_mm = first.width_mm
+    opts.label_height_mm = first.height_mm
+    dither = _pick(args, "dither", "auto")
+    rasters: list[R.Raster] = []
+    label_ids: list[str] = []
+    for page in pages:
+        image = (
+            _pdf_page_on_media(page, media, printer, args.fit) if media is not None else page.image
+        )
+        raster = protocol.prepare_raster(image, printer, opts, dither)
+        for copy in range(1, args.copies + 1):
+            rasters.append(raster)
+            label_ids.append(f"page {page.number}" + (f" copy {copy}" if args.copies > 1 else ""))
+    log.info(
+        "PDF: %s, pages=%s, size=%.2fx%.2fmm at %ddpi",
+        args.pdf_file,
+        ",".join(str(page.number) for page in pages),
+        first.width_mm,
+        first.height_mm,
+        printer.dpi,
+    )
+    return _send_rasters(args, printer, opts, rasters, label_ids, dither)
 
 
 def cmd_test(args: Args) -> int:
@@ -1149,6 +1247,26 @@ def build_parser() -> argparse.ArgumentParser:
         "to a printer; with --out, capture the bytes it would send",
     )
     sp.set_defaults(func=cmd_print)
+
+    sp = sub.add_parser(
+        "print-pdf", help="print each exact-size PDF page as one label", parents=[common]
+    )
+    sp.add_argument("pdf_file", metavar="PDF", help="PDF whose pages are individual labels")
+    add_render_options(sp)
+    add_printer_options(sp)
+    sp.add_argument("--pages", help="one-based pages and ranges, e.g. 1,3-5 (default all)")
+    sp.add_argument("--copies", type=_positive_int, default=1, help="copies of each page")
+    sp.add_argument(
+        "--fit",
+        action="store_true",
+        help="allow a PDF page whose physical size differs from Brother media",
+    )
+    sp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="render and simulate printing; with --out, capture the printer bytes",
+    )
+    sp.set_defaults(func=cmd_print_pdf)
 
     sp = sub.add_parser("pdf", help="render records to a PDF instead of printing", parents=[common])
     add_source_options(sp)

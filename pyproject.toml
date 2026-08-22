@@ -8,6 +8,7 @@ dependencies = [
     "qrcode>=7.4",
     "bleak>=0.22",
     "pyserial>=3.5",
+    "pypdfium2>=5.13.0",
 ]
 
 [project.optional-dependencies]
@@ -77,7 +78,15 @@ warn_unreachable = true
 [[tool.mypy.overrides]]
 # Optional extras, none of which ship stubs: they may not be installed at all,
 # and an import of anything else staying an error is the point of scoping this.
-module = ["bleak.*", "usb.*", "rich.*", "barcode.*", "serial.*", "qrcode.*"]
+module = [
+    "bleak.*",
+    "usb.*",
+    "rich.*",
+    "barcode.*",
+    "serial.*",
+    "qrcode.*",
+    "pypdfium2.*",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

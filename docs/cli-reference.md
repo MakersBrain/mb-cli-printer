@@ -44,7 +44,7 @@ than applying filter, limit, or copy selection.
 
 ## Render options
 
-`print`, `pdf`, and `preview` accept:
+`print`, `print-pdf`, `pdf`, and `preview` accept:
 
 | Option | Meaning |
 |---|---|
@@ -52,7 +52,7 @@ than applying filter, limit, or copy selection.
 
 ## Printer and media options
 
-These are accepted by `print`, `status`, and `test` unless noted otherwise.
+These are accepted by `print`, `print-pdf`, `status`, and `test` unless noted otherwise.
 
 | Option | Meaning |
 |---|---|
@@ -73,7 +73,7 @@ offset options.
 
 ## Transport options
 
-These are accepted by `print`, `status`, and `test`.
+These are accepted by `print`, `print-pdf`, `status`, and `test`.
 
 | Option | Meaning |
 |---|---|
@@ -92,6 +92,20 @@ These are accepted by `print`, `status`, and `test`.
 
 `print` additionally accepts `--dry-run`; with `--out`, it captures the bytes
 that would have been sent.
+
+## Direct PDF printing
+
+```text
+mbprint print-pdf PDF [--pages 1,3-5] [--copies N] [--fit] [printer options]
+```
+
+Each selected PDF page is one label. Pages are rasterized at the selected
+printer's native DPI and sent through the same protocol and transport as
+`print`, including Brother QL and Phomemo models. All selected pages must have
+the same physical size. On Brother QL
+printers the page must match the loaded or selected DK media; a transposed page
+is rotated automatically. `--fit` explicitly permits scaling a mismatched page.
+`--dry-run --out job.bin` captures the resulting printer byte stream.
 
 ## PDF options
 

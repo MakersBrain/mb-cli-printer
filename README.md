@@ -96,6 +96,13 @@ Create one PDF page per label:
 mbprint pdf -l label.json -c inventory.csv -o labels.pdf
 ```
 
+Print an existing exact-size PDF directly (one page per label):
+
+```sh
+mbprint print-pdf labels.pdf --model ql-1110nwb --transport usb
+mbprint print-pdf labels.pdf --model m110 --transport usb
+```
+
 Tile labels on A4 with cut marks:
 
 ```sh
@@ -126,6 +133,7 @@ in [Printers and transports](docs/printers-and-transports.md).
 | Command | Purpose |
 |---|---|
 | `print` | render records and send them to a printer |
+| `print-pdf` | rasterize and print one exact-size label per PDF page |
 | `pdf` | render records to a PDF |
 | `preview` | render records to PNG, optionally as the fitted printer raster |
 | `fields` | inspect placeholders and CSV mappings |

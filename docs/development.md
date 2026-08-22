@@ -35,7 +35,7 @@ mbprint/
   printers.py      model definitions and detection
   printers.json    bundled model table
   media.py         Brother DK geometry and fitting
-  pdf.py           exact-size and tiled PDF output
+  pdf.py           exact-size PDF output plus page selection and rasterization
   config.py        persistent defaults
   log.py           logger setup, TRACE level, and hex dumps
   ui.py            terminal detection and progress reporters
@@ -53,6 +53,10 @@ CSV + --data
     -> protocol.print_raster
     -> selected transport
 ```
+
+`print-pdf` enters the same pipeline at the image stage: PDFium rasterizes each
+page at the printer's native DPI, then `prepare_raster` and `print_raster` handle
+media placement, printer framing, and transport delivery.
 
 `prepare_raster` halftones, rotates when required, and fits the bitmap to the
 head. `print_raster` frames it for the selected protocol. The transport clamps

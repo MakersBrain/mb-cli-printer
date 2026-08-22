@@ -591,7 +591,7 @@ def test_unknown_device_name_is_warned_about(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="mbprint.printers"):
-        assert printers.resolve(None, "M110-0123456789").id == "generic"
+        assert printers.resolve(None, "UnknownPrinter-0123456789").id == "generic"
     warnings = " ".join(r.getMessage() for r in caplog.records)
     assert "matches no known model" in warnings
     assert "--model" in warnings

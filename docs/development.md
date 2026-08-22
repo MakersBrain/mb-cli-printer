@@ -9,12 +9,12 @@ Run the hardware-free suite with:
 uv run pytest tests -q
 ```
 
-The 108 tests cover templates, filters, optional segments, missing fields,
+The 111 tests cover templates, filters, optional segments, missing fields,
 column mapping, copies, raster packing, alignment, rotation, all protocol
 frames, MTU clamping, model detection, exact-DPI PDF generation, direct PDF
-printing through Brother and Phomemo flows, config ordering, progress, logging,
-Brother streams compared with `brother_ql`, and a status block captured from a
-QL-1110NWB.
+printing through Brother and Phomemo flows, vector SVG output, config ordering,
+progress, logging, Brother streams compared with `brother_ql`, and a status
+block captured from a QL-1110NWB.
 
 Useful additional checks are:
 
@@ -37,6 +37,7 @@ mbprint/
   printers.json    bundled model table
   media.py         Brother DK geometry and fitting
   pdf.py           exact-size PDF output plus page selection and rasterization
+  svg.py           exact-size hybrid vector/raster SVG export
   config.py        persistent defaults
   log.py           logger setup, TRACE level, and hex dumps
   ui.py            terminal detection and progress reporters

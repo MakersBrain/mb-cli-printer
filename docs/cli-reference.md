@@ -21,7 +21,7 @@ uses ordinary log lines instead.
 
 ## Source options
 
-Layout and data options are accepted by `print`, `pdf`, `preview`, and
+Layout and data options are accepted by `print`, `pdf`, `svg`, `preview`, and
 `fields`.
 
 | Option | Meaning |
@@ -135,6 +135,17 @@ for the complete workflow and media-safety behavior.
 | `--bilevel` | apply halftoning without head fitting |
 | `--printer-scale` | render at the selected model's DPI |
 | `--zoom N` | enlarge the PNG |
+
+## SVG options
+
+```text
+mbprint svg [source options] [--out PATH_OR_DIRECTORY]
+```
+
+One exact-size SVG is written per expanded record. A single record may target a
+specific `.svg` path; batches use an output directory. Text, shapes, QR codes,
+rotation, and clipping remain vectors. Images and barcodes are embedded PNG
+data. See [SVG export](svg-export.md) for fidelity and naming details.
 
 ## Other commands
 

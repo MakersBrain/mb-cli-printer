@@ -15,7 +15,7 @@ from typing import Any
 
 from PIL import Image
 
-from mbprint import __version__, brother, ipp, layout, pdf, printers, protocol, ui, wireless
+from mbprint import __version__, brother, ipp, layout, pdf, printers, protocol, svg, ui, wireless
 from mbprint import config as cfg
 from mbprint import data as datamod
 from mbprint import log as mblog
@@ -702,6 +702,23 @@ def cmd_pdf(args: Args) -> int:
     return 0
 
 
+def cmd_svg(args: Args) -> int:
+    """Write one exact-size SVG file per expanded label record."""
+    label = _resolve_label(args)
+    records = _resolve_records(args)
+    _check_missing(label, records, args)
+    destination = Path(args.out or "svg")
+    single_file = len(records) == 1 and destination.suffix.lower() == ".svg"
+    if not single_file:
+        destination.mkdir(parents=True, exist_ok=True)
+    for index, record in enumerate(records, 1):
+        name = (record.get("ref") or record.get("sku") or f"label{index}").replace("/", "-")
+        path = destination if single_file else destination / f"{index:03d}-{name}.svg"
+        svg.write(label, record, path, decimal=args.decimal)
+        print(path)
+    return 0
+
+
 def cmd_print(args: Args) -> int:
     label = _resolve_label(args)
     records = _resolve_records(args)
@@ -1241,7 +1258,7 @@ def build_parser() -> argparse.ArgumentParser:
     common = logging_parser()
     p = argparse.ArgumentParser(
         prog="mbprint",
-        description="Print label.json layouts on Phomemo printers, or export them as PDF.",
+        description="Print label.json layouts, or export them as PDF, SVG, and PNG.",
         parents=[common],
     )
     sub = p.add_subparsers(dest="command", required=True)
@@ -1307,6 +1324,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="explicit render scale (overrides the selected model's native DPI)",
     )
     sp.set_defaults(func=cmd_pdf)
+
+    sp = sub.add_parser("svg", help="render records to exact-size SVG files", parents=[common])
+    add_source_options(sp)
+    sp.add_argument(
+        "--out",
+        "-o",
+        default="svg",
+        help="output directory, or a .svg path when rendering one record",
+    )
+    sp.set_defaults(func=cmd_svg)
 
     sp = sub.add_parser("preview", help="render records to PNG files", parents=[common])
     add_source_options(sp)

@@ -1,12 +1,12 @@
 # mb-cli-printer
 
 Render `label.json` layouts with CSV data, then print them on Phomemo and
-Brother label printers or export them as PDF and PNG.
+Brother label printers or export them as PDF, SVG, and PNG.
 
 `mbprint` supports BLE, classic Bluetooth, TCP, serial, USB, and capture-to-file
 transports. It includes eight printer protocol families, automatic BLE MTU
-handling, reusable field templates, label alignment controls, exact-size and
-tiled PDFs, and hardware-free dry runs.
+handling, reusable field templates, label alignment controls, exact-size PDF
+and SVG output, tiled PDFs, and hardware-free dry runs.
 
 ## Install
 
@@ -106,6 +106,12 @@ mbprint print-pdf labels.pdf --model ql-1110nwb --transport usb
 mbprint print-pdf labels.pdf --model m110 --transport usb
 ```
 
+Export editable exact-size SVG files:
+
+```sh
+mbprint svg -l label.json -c inventory.csv -o vectors/
+```
+
 Tile labels on A4 with cut marks:
 
 ```sh
@@ -140,6 +146,7 @@ The complete generate-to-print workflow is in
 | `print` | render records and send them to a printer |
 | `print-pdf` | rasterize and print one exact-size label per PDF page |
 | `pdf` | render records to a PDF |
+| `svg` | render one exact-size SVG file per label |
 | `preview` | render records to PNG, optionally as the fitted printer raster |
 | `fields` | inspect placeholders and CSV mappings |
 | `printers` | list known models, protocols, head widths, and resolutions |
@@ -198,6 +205,7 @@ More model- and transport-specific guidance is in
 
 - [Data, templates, and filters](docs/data-and-templates.md)
 - [PDF generation and direct printing](docs/pdf-workflows.md)
+- [SVG export](docs/svg-export.md)
 - [Printers and transports](docs/printers-and-transports.md)
 - [CLI reference](docs/cli-reference.md)
 - [Brother wireless configuration](docs/brother-wireless-config.md)
@@ -212,6 +220,6 @@ uv sync
 uv run pytest tests -q
 ```
 
-The suite currently contains 108 hardware-free tests. See
+The suite currently contains 111 hardware-free tests. See
 [Development and reverse engineering](docs/development.md) for the module map,
 test coverage, and the Nix-based printer research tools.

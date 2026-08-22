@@ -1,7 +1,7 @@
 [project]
 name = "mb-cli-printer"
 version = "0.1.0"
-description = "Phomemo label printer driver + label.json layout renderer (print, preview, PDF)"
+description = "Label printer driver and label.json renderer for print, PDF, SVG, and PNG"
 requires-python = ">=3.10"
 dependencies = [
     "pillow>=10.0",

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image, ImageDraw
 
-from mbprint import brother, data, layout, pdf, printers, protocol, wireless
+from mbprint import brother, data, layout, pdf, printers, protocol, svg, wireless
 from mbprint import raster as R
 from mbprint.transport.file import FileTransport
 from mbprint.transport.usb import (
@@ -336,6 +336,86 @@ def test_pdf_explicit_scale_overrides_selected_model(tmp_path, monkeypatch):
         == 0
     )
     assert captured["size"] == (480, 320)
+
+
+def test_svg_export_preserves_size_vector_elements_and_templates(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    label = layout.Label(
+        width_mm=30,
+        height_mm=20,
+        dots_per_mm=8,
+        name="SVG label",
+        elements=[
+            {
+                "type": "text",
+                "x": 4,
+                "y": 4,
+                "width": 100,
+                "height": 24,
+                "text": "{{name}} & Co",
+                "fontSize": 14,
+                "align": "left",
+            },
+            {
+                "type": "shape",
+                "shapeType": "rectangle",
+                "x": 10,
+                "y": 40,
+                "width": 60,
+                "height": 30,
+                "fill": "none",
+                "stroke": "black",
+                "rotation": 15,
+            },
+            {"type": "qr", "x": 120, "y": 20, "width": 80, "height": 80, "qrData": "{{qr}}"},
+        ],
+    )
+    content = svg.render(label, {"name": "Maker", "qr": "https://example.test"})
+    root = ET.fromstring(content)
+    namespace = {"s": svg.SVG_NS}
+    assert root.attrib["width"] == "30mm"
+    assert root.attrib["height"] == "20mm"
+    assert root.attrib["viewBox"] == "0 0 240 160"
+    assert "Maker &amp; Co" in content
+    assert root.find(".//s:text", namespace) is not None
+    assert root.find(".//s:path", namespace) is not None  # vector QR modules
+    assert "rotate(15 40 55)" in content
+
+
+def test_svg_cli_writes_one_file_per_record(tmp_path):
+    from mbprint import cli
+
+    label_file = tmp_path / "label.json"
+    label_file.write_text(
+        '{"widthMm":30,"heightMm":20,"elements":['
+        '{"type":"text","x":0,"y":0,"width":100,"height":20,"text":"{{name}}"}]}',
+        encoding="utf-8",
+    )
+    csv_file = tmp_path / "records.csv"
+    csv_file.write_text("Name\nAlpha\nBeta\n", encoding="utf-8")
+    out = tmp_path / "vectors"
+    assert cli.main(["svg", "-l", str(label_file), "-c", str(csv_file), "-o", str(out)]) == 0
+    files = sorted(out.glob("*.svg"))
+    assert [path.name for path in files] == ["001-label1.svg", "002-label2.svg"]
+    assert "Alpha" in files[0].read_text(encoding="utf-8")
+
+
+def test_svg_embeds_image_elements_as_self_contained_png():
+    import base64
+    import io
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (2, 2), "black").save(buffer, "PNG")
+    uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    label = layout.Label(
+        width_mm=10,
+        height_mm=10,
+        elements=[{"type": "image", "x": 0, "y": 0, "width": 40, "height": 40, "imageData": uri}],
+    )
+    content = svg.render(label)
+    assert "data:image/png;base64," in content
+    assert "xlink:href=" in content
 
 
 def test_pdf_page_selection_and_native_dpi_rendering(tmp_path):

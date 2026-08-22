@@ -96,7 +96,7 @@ existing layouts.
 
 ## Missing fields
 
-Before `print`, `pdf`, or `preview` renders output, every required placeholder
+Before `print`, `pdf`, `svg`, or `preview` renders output, every required placeholder
 is checked against every expanded record. Placeholders used only inside an
 optional segment are not required. A `default:` filter also satisfies the
 check.
@@ -126,7 +126,7 @@ The current `fields` report always analyzes the complete CSV; `--filter`,
 
 ## Selecting records and copies
 
-For `print`, `pdf`, and `preview`:
+For `print`, `pdf`, `svg`, and `preview`:
 
 - `--filter COLUMN=VALUE` keeps matching rows and is repeatable.
 - `--limit N` keeps the first N records after filtering.

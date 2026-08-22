@@ -82,7 +82,10 @@ These are accepted by `print`, `status`, and `test`.
 | `--host HOST`, `--tcp-port N` | network printer; port defaults to 9100 |
 | `--rfcomm-channel N` | classic Bluetooth channel; default 1 |
 | `--port PATH`, `--baud N` | serial or RFCOMM device; baud defaults to 115200 |
-| `--usb-vid ID`, `--usb-pid ID` | USB device selection |
+| `--usb-vid ID`, `--usb-pid ID` | USB vendor/product selection |
+| `--usb-serial SERIAL` | select one USB printer by stable serial number |
+| `--usb-bus N`, `--usb-address N` | select one USB connection by its current location |
+| `--usb-interface N`, `--usb-alt N` | select a USB interface and alternate setting |
 | `--mtu N` | cap the transport payload size |
 | `--chunk-delay MS` | override inter-chunk pacing |
 | `-o`, `--out PATH` | capture bytes for the file transport |
@@ -121,6 +124,11 @@ mbprint config list
 mbprint config get KEY
 mbprint config set KEY VALUE
 mbprint config unset KEY
+mbprint wifi scan [--scan-wait SECONDS] [--raw] [transport options]
+mbprint wifi status [--raw] [transport options]
+mbprint wifi [configure] --ssid NAME [--password-stdin] [transport options]
+mbprint usb-list [--usb-vid ID] [--usb-pid ID]
+mbprint usb-info [--usb-serial SERIAL | --usb-bus N --usb-address N]
 ```
 
 Supported scalar config keys are `model`, `transport`, `address`, `device`,

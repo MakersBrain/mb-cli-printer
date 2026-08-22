@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import logging
 import os
 import sys
@@ -13,7 +14,7 @@ from typing import Any
 
 from PIL import Image
 
-from mbprint import __version__, ipp, layout, pdf, printers, protocol, ui
+from mbprint import __version__, ipp, layout, pdf, printers, protocol, ui, wireless
 from mbprint import config as cfg
 from mbprint import data as datamod
 from mbprint import log as mblog
@@ -147,7 +148,7 @@ def add_printer_options(p: argparse.ArgumentParser) -> None:
         "-t",
         default=None,
         choices=["ble", "bluetooth", "tcp", "serial", "usb", "file"],
-        help="transport (default ble; bluetooth for classic SPP, tcp for network)",
+        help="transport (default ble; the wifi command defaults to usb)",
     )
     p.add_argument("--host", default=None, help="printer hostname or IP, for --transport tcp")
     p.add_argument(
@@ -163,8 +164,16 @@ def add_printer_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--baud", type=int, default=115200, help="serial baud rate")
     p.add_argument("--usb-vid", default=None, help="USB vendor id, e.g. 0x0483")
     p.add_argument("--usb-pid", default=None, help="USB product id")
+    p.add_argument("--usb-serial", default=None, help="select one USB printer by serial number")
+    p.add_argument("--usb-bus", type=int, default=None, help="select a USB bus number")
+    p.add_argument("--usb-address", type=int, default=None, help="select a USB device address")
+    p.add_argument("--usb-interface", type=int, default=0, help="USB interface number (default 0)")
+    p.add_argument("--usb-alt", type=int, default=0, help="USB alternate setting (default 0)")
     p.add_argument(
-        "--out", "-o", default=None, help="with --transport file: write the byte stream here"
+        "--out",
+        "-o",
+        default=None,
+        help="capture path for --transport file or a wifi --dry-run",
     )
     p.add_argument("--density", type=int, default=None, help="print density 1-8 (default 6)")
     p.add_argument("--feed", type=int, default=None, help="feed after each label in dots")
@@ -489,7 +498,17 @@ def _make_transport(args: Args, printer: printers.PrinterDef | None) -> Transpor
     if kind == "usb":
         vid = int(args.usb_vid, 0) if args.usb_vid else None
         pid = int(args.usb_pid, 0) if args.usb_pid else None
-        return build_transport("usb", vid=vid, pid=pid, max_write=mtu or 512)
+        return build_transport(
+            "usb",
+            vid=vid,
+            pid=pid,
+            max_write=mtu or 512,
+            interface=getattr(args, "usb_interface", 0),
+            alternate=getattr(args, "usb_alt", 0),
+            serial=getattr(args, "usb_serial", None),
+            bus=getattr(args, "usb_bus", None),
+            address=getattr(args, "usb_address", None),
+        )
     if kind == "file":
         return build_transport("file", path=args.out or "-", max_write=mtu or 512)
     raise SystemExit(f"unknown transport {kind!r}")
@@ -860,6 +879,174 @@ def cmd_config(args: Args) -> int:
     raise SystemExit(f"unknown config action {args.action!r}")
 
 
+def cmd_wifi(args: Args) -> int:
+    """Inspect or configure Brother's native Wi-Fi settings protocol."""
+    if args.action in ("scan", "status"):
+
+        async def query() -> None:
+            transport = _make_transport(args, None)
+            async with transport:
+                if args.action == "scan":
+                    await transport.send(wireless.wifi_scan_start_command())
+                    await transport.delay(round(args.scan_wait * 1000))
+                    await transport.send(wireless.wifi_scan_result_command())
+                    reply = await _collect_response(transport, 3000)
+                    points = wireless.parse_access_points(reply)
+                    if points:
+                        print("SSID                             CH  POWER  SECURITY")
+                        for point in points:
+                            security = (
+                                "enterprise"
+                                if point.enterprise
+                                else "encrypted"
+                                if point.encrypted
+                                else "open"
+                            )
+                            print(
+                                f"{point.ssid[:32]:<32} {point.channel:>3} {point.power:>6}  {security}"
+                            )
+                    else:
+                        print("no access points decoded (the printer may not support this query)")
+                else:
+                    await transport.send(wireless.wifi_info_command())
+                    reply = await _collect_response(transport, 3000)
+                    connected = wireless.parse_wifi_status(reply)
+                    address = wireless.parse_ip_address(reply)
+                    state = (
+                        "connected"
+                        if connected
+                        else "disconnected"
+                        if connected is False
+                        else "unknown"
+                    )
+                    print(f"wifi: {state}")
+                    print(f"ipv4: {address or 'unknown'}")
+                if args.raw:
+                    print(f"raw ({len(reply)} bytes): {reply.hex(' ') if reply else '(no reply)'}")
+
+        asyncio.run(query())
+        return 0
+
+    if not args.ssid:
+        raise SystemExit("wifi configure needs --ssid NAME")
+    password = args.password
+    if args.password_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+    elif password is None and args.authentication != "open":
+        if not sys.stdin.isatty():
+            raise SystemExit("password required; use --password-stdin or --password")
+        password = getpass.getpass("Wi-Fi password: ")
+
+    settings = wireless.WirelessSettings(
+        ssid=args.ssid,
+        password=password or "",
+        encryption=args.encryption,
+        authentication=args.authentication,
+        infrastructure=not args.no_infrastructure,
+        wireless_direct=args.wireless_direct,
+        reboot=not args.no_reboot,
+    )
+    try:
+        command = settings.command()
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+    if args.dry_run:
+        Path(args.out or "brother-wifi.bin").write_bytes(command)
+        print(f"wrote {len(command)} credential-bearing bytes to {args.out or 'brother-wifi.bin'}")
+        return 0
+    if not args.yes and not _ask(
+        f"Configure {args.ssid!r} and reboot the printer? This changes its network settings."
+    ):
+        raise SystemExit("cancelled")
+
+    async def send() -> None:
+        transport = _make_transport(args, None)
+        async with transport:
+            await transport.send(command)
+        print(f"sent {len(command)} bytes via {transport.name}; the printer may now reboot")
+
+    asyncio.run(send())
+    return 0
+
+
+async def _collect_response(
+    transport: Transport, first_timeout_ms: int, idle_timeout_ms: int = 250
+) -> bytes:
+    """Collect a possibly packetized response until the receive side goes idle."""
+    chunks: list[bytes] = []
+    reply = await transport.wait_for_response(first_timeout_ms)
+    while reply:
+        chunks.append(reply)
+        reply = await transport.wait_for_response(idle_timeout_ms)
+    return b"".join(chunks)
+
+
+def cmd_usb_info(args: Args) -> int:
+    """Show descriptors and standard Printer Class information without changing settings."""
+    from mbprint.transport.usb import USBTransport
+
+    async def query() -> None:
+        transport = _make_transport(args, None)
+        if not isinstance(transport, USBTransport):
+            raise SystemExit("usb-info requires --transport usb")
+        async with transport:
+            info = transport.device_info
+            print(f"device:       {info['vid']:04x}:{info['pid']:04x}")
+            print(f"location:     bus {info['bus']} address {info['address']}")
+            print(f"manufacturer: {info['manufacturer'] or 'unknown'}")
+            print(f"product:      {info['product'] or 'unknown'}")
+            print(f"serial:       {info['serial'] or 'unknown'}")
+            print(
+                f"interface:    {info['interface']} alt {info['alternate']} "
+                f"protocol {info['protocol']}"
+            )
+            endpoint_in = info["in_endpoint"]
+            print(
+                f"endpoints:    OUT 0x{info['out_endpoint']:02x}, "
+                + (f"IN 0x{endpoint_in:02x}" if endpoint_in is not None else "IN none")
+                + f", {info['packet_size']}-byte packets"
+            )
+            device_id = await transport.get_device_id()
+            port = await transport.get_port_status()
+            print(f"device ID:    {device_id or 'unavailable'}")
+            if port is None:
+                print("port status:  unavailable")
+            else:
+                print(
+                    "port status:  "
+                    + ("selected" if port["selected"] else "not selected")
+                    + (", paper empty" if port["paper_empty"] else ", paper present")
+                    + (", error" if port["error"] else ", no error")
+                )
+
+    asyncio.run(query())
+    return 0
+
+
+def cmd_usb_list(args: Args) -> int:
+    """List supported USB printers without claiming their interfaces."""
+    from mbprint.transport.usb import describe_usb_device, find_usb_devices
+
+    vid = int(args.usb_vid, 0) if args.usb_vid else None
+    pid = int(args.usb_pid, 0) if args.usb_pid else None
+    devices = [describe_usb_device(dev) for dev in find_usb_devices(vid, pid)]
+    if not devices:
+        print("no supported USB printers found")
+        return 0
+    print("BUS  ADDR  USB ID     SERIAL                    PRODUCT")
+    for info in devices:
+        bus = str(info["bus"]) if info["bus"] is not None else "?"
+        address = str(info["address"]) if info["address"] is not None else "?"
+        serial = info["serial"] or "-"
+        product = info["product"] or info["manufacturer"] or "unknown"
+        print(
+            f"{bus:>3}  {address:>4}  {info['vid']:04x}:{info['pid']:04x}  "
+            f"{serial[:24]:<24}  {product}"
+        )
+    return 0
+
+
 # --- parser ----------------------------------------------------------------
 
 
@@ -956,6 +1143,38 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("key", nargs="?", help="a scalar key, or data.<field> for a template")
     sp.add_argument("value", nargs="?")
     sp.set_defaults(func=cmd_config)
+
+    sp = sub.add_parser("wifi", help="inspect or configure Brother QL Wi-Fi", parents=[common])
+    add_printer_options(sp)
+    sp.add_argument(
+        "action", nargs="?", choices=["configure", "scan", "status"], default="configure"
+    )
+    sp.add_argument("--ssid", help="network name (configure action)")
+    secret = sp.add_mutually_exclusive_group()
+    secret.add_argument("--password", help="network password (visible in the process list)")
+    secret.add_argument(
+        "--password-stdin", action="store_true", help="read one password line from stdin"
+    )
+    sp.add_argument("--encryption", choices=sorted(wireless.ENCRYPTIONS), default="tkip-aes")
+    sp.add_argument("--authentication", choices=sorted(wireless.AUTHENTICATIONS), default="wpa-psk")
+    sp.add_argument("--no-infrastructure", action="store_true")
+    sp.add_argument("--wireless-direct", action="store_true")
+    sp.add_argument("--no-reboot", action="store_true")
+    sp.add_argument("--yes", action="store_true", help="send without confirmation")
+    sp.add_argument("--scan-wait", type=float, default=5.0, help="seconds to wait for AP scan")
+    sp.add_argument("--raw", action="store_true", help="also print the unparsed response bytes")
+    sp.add_argument(
+        "--dry-run", action="store_true", help="write the command to --out without sending it"
+    )
+    sp.set_defaults(func=cmd_wifi, transport="usb")
+
+    sp = sub.add_parser("usb-list", help="list supported USB printers", parents=[common])
+    add_printer_options(sp)
+    sp.set_defaults(func=cmd_usb_list, transport="usb")
+
+    sp = sub.add_parser("usb-info", help="show read-only USB printer information", parents=[common])
+    add_printer_options(sp)
+    sp.set_defaults(func=cmd_usb_info, transport="usb")
 
     return p
 

@@ -1,13 +1,19 @@
 """Unit tests: templating, record building, raster maths and protocol framing."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image, ImageDraw
 
-from mbprint import data, layout, pdf, printers, protocol
+from mbprint import data, layout, pdf, printers, protocol, wireless
 from mbprint import raster as R
 from mbprint.transport.file import FileTransport
+from mbprint.transport.usb import (
+    decode_device_id,
+    decode_port_status,
+    select_usb_device,
+)
 
 CSV = """Name,Internal Reference,Sales Price,Quantity On Hand
 Alpha Gadget,AG-EX-0001,40.00,3
@@ -859,3 +865,82 @@ def test_brother_status_rejects_a_foreign_reply():
         protocol.brother_parse_status(bytes(32))  # no 80 20 42 header
     with pytest.raises(SystemExit):
         protocol.brother_parse_status(bytes([0x80, 0x20, 0x42]))  # too short
+
+
+def test_brother_wireless_command_matches_reversed_native_format():
+    command = wireless.WirelessSettings(ssid="Maker WiFi", password="secret").command()
+    assert command.startswith(wireless.PJL_HEADER)
+    assert b'DEFAULT OBJBRNET="458877:-4d-61-6b-65-72-20-57-69-46-69"' in command
+    assert b'DEFAULT OBJBRNET="458880:8"' in command
+    assert b'DEFAULT OBJBRNET="458881:3"' in command
+    assert b'DEFAULT OBJBRNET="459138.2:1"' in command
+    encrypted = wireless.xor_password(b"secret")
+    assert b'DEFAULT OBJBRNET="99458890:' + encrypted + b'"' in command
+    assert command.endswith(wireless.PJL_FOOTER + wireless.REBOOT_COMMAND)
+
+
+def test_brother_open_wireless_command_omits_password():
+    command = wireless.WirelessSettings(
+        ssid="Guest", password="", encryption="none", authentication="open"
+    ).command()
+    assert b"99458890" not in command
+    assert b"99458889.1" not in command
+    assert b'DEFAULT OBJBRNET="458880:1"' in command
+    assert b'DEFAULT OBJBRNET="458881:1"' in command
+
+
+def test_brother_wireless_password_xor_is_reversible():
+    assert wireless.xor_password(wireless.xor_password(b"correct horse")) == b"correct horse"
+
+
+def test_brother_wireless_read_commands_match_native_pjl():
+    assert wireless.wifi_scan_start_command() == (
+        wireless.PJL_HEADER + b'@PJL DEFAULT OBJBRNET="458845:31-3a"\r\n' + wireless.PJL_FOOTER
+    )
+    assert wireless.wifi_scan_result_command() == (
+        wireless.PJL_HEADER + b"@PJL INFO AVAILABLEWLAN\r\n" + wireless.PJL_FOOTER
+    )
+    assert wireless.wifi_info_command() == (
+        wireless.PJL_HEADER + b"@PJL INQUIRE OBJBRNET\r\n" + wireless.PJL_FOOTER
+    )
+
+
+def test_brother_wireless_response_decoders():
+    reply = b'@PJL INFO OBJBRNET\r\n"458867:1"\r\n"458967.2:c0-a8-01-32"\r\n'
+    assert wireless.parse_wifi_status(reply) is True
+    assert wireless.parse_ip_address(reply) == "192.168.1.50"
+    assert wireless.parse_wifi_status(b'"458867:0"') is False
+    assert wireless.parse_ip_address(b'"458967.2:ffff-00-00-01"') is None
+
+
+def test_brother_access_point_decoder_ignores_unknown_rows():
+    reply = b"header\r\nVAP,-4d-61-6b-65-72,ignored,ignored,11,87,0,2\r\nbad,row\r\n"
+    assert wireless.parse_access_points(reply) == [
+        wireless.AccessPoint("Maker", channel=11, power=87, enterprise=False, encrypted=True)
+    ]
+
+
+def test_usb_printer_class_response_decoders():
+    identifier = b"MFG:Brother;MDL:QL-1110NWB;"
+    assert (
+        decode_device_id((len(identifier) + 2).to_bytes(2, "big") + identifier)
+        == identifier.decode()
+    )
+    assert decode_device_id(b"\x00") is None
+    assert decode_port_status(0x18) == {"selected": True, "paper_empty": False, "error": False}
+
+
+def test_usb_selector_requires_one_unambiguous_device():
+    first = SimpleNamespace(idVendor=0x04F9, idProduct=0x209B, bus=1, address=7)
+    second = SimpleNamespace(idVendor=0x04F9, idProduct=0x209B, bus=1, address=9)
+    serials = {id(first): "QL-A", id(second): "QL-B"}
+
+    def read_serial(dev):
+        return serials[id(dev)]
+
+    assert select_usb_device([first, second], serial="QL-B", serial_reader=read_serial) is second
+    assert select_usb_device([first, second], bus=1, address=7) is first
+    with pytest.raises(SystemExit, match="multiple USB printers match"):
+        select_usb_device([first, second])
+    with pytest.raises(SystemExit, match="serial 'missing'"):
+        select_usb_device([first, second], serial="missing", serial_reader=read_serial)

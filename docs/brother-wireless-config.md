@@ -1,8 +1,8 @@
 # Brother wireless configuration
 
-Notes on how Brother's iPrint&Label app puts a QL on a wireless network, and
-on what would be needed to do the same from `mbprint`. Nothing here is
-implemented; the transport question at the end is still open.
+Notes on how Brother's iPrint&Label app puts a QL on a wireless network and on
+the corresponding `mbprint wifi` implementation. Hardware validation of the
+USB control path is still pending.
 
 ## How the app does it
 
@@ -76,6 +76,7 @@ no key derivation and no state:
 ```python
 KEY = bytes.fromhex("0daee4a18b7f265e725b177a71cdec4d")
 
+
 def encrypt(value: bytes) -> bytes:
     return bytes(b ^ KEY[i % len(KEY)] for i, b in enumerate(value))
 ```
@@ -83,24 +84,74 @@ def encrypt(value: bytes) -> bytes:
 It is an involution, so the same function recovers a password from a captured
 command. Treat a captured blob as containing the plaintext credential.
 
+## Recovered value and envelope encodings
+
+`458880` and `458881` are the decimal representations of the Java encryption
+and authentication enum values. The mode values are decimal booleans; the app
+sends infrastructure `1`, Wireless Direct `0`, and trailing `458865` value `1`.
+An SSID is its UTF-8 bytes written as lowercase hex with a `-` before every
+byte. Each parameter is serialized as:
+
+```text
+@PJL DEFAULT OBJBRNET="OID:value"\r\n
+```
+
+The complete envelope is:
+
+```text
+ESC%-12345X@PJL\r\n
+...parameters...
+ESC%-12345X
+1b 69 58 2a 31 03 00 01 2e 00 00 00 2c 00   (reboot)
+```
+
+Generate a capture without touching hardware:
+
+```sh
+printf '%s\n' 'network password' | mbprint wifi --ssid 'Maker WiFi' \
+  --password-stdin --dry-run --out brother-wifi.bin
+```
+
+Send it after first validating the transport on the target printer:
+
+```sh
+printf '%s\n' 'network password' | mbprint wifi --ssid 'Maker WiFi' \
+  --password-stdin --transport usb --yes
+```
+
+The reversed read-only commands are also available for capture-testing:
+
+```sh
+mbprint usb-info
+mbprint wifi status --raw
+mbprint wifi scan --scan-wait 5 --raw
+```
+
+`usb-info` uses the standard USB Printer Class `GET_DEVICE_ID` and
+`GET_PORT_STATUS` control requests. `wifi status` asks for `OBJBRNET` and
+decodes wireless OID `458867` plus IPv4 OID `458967.2`. `wifi scan` starts the
+Brother AP search (`458845:31-3a`) and then requests `INFO AVAILABLEWLAN`.
+Use `--raw` during hardware validation because firmware variants may return a
+row shape the conservative decoder does not yet recognize.
+
+The capture contains a recoverable credential. Keep it out of version control
+and delete it when it is no longer needed.
+
 ## What is not established
 
-- The value encodings for `458880`, `458881` and `458865`. The ids are certain,
-  but those three values are computed rather than string literals, and were not
-  traced.
-- The contents of `pjlHeader`, `pjlFooter` and `rebootCommand`. They live in BSS
-  and are built at runtime, so reading them means finding the static
-  initializer. Only the format fragments above are confirmed.
 - Whether the QL accepts this on the channel `mbprint` prints through. A
   QL-1110NWB on USB did not answer read-only PJL (`@PJL INFO ID`,
   `INFO STATUS`, `INFO AVAILABLEWLAN`) on the interface 0 alt 0 bulk pair,
   either cold or after `ESC @`. It returned only leftover raster status blocks,
   then nothing. Interface 0 alt 1 and interface 1 alt 1 are both printer class
-  with protocol 4, IEEE 1284.4, which is the more likely home for a control
-  channel. Framing may have to be worked out alongside the payload.
+  with protocol 4. USB Printer Class 1.1 assigns IEEE 1284.4 to protocol 3 and
+  reserves protocol 4, so Brother's interface must be capture-tested rather
+  than assumed to use standard 1284.4 framing. Use `--usb-interface` and
+  `--usb-alt` to select the descriptor pair while testing. See the
+  [USB-IF Printer Class 1.1 specification](https://www.usb.org/sites/default/files/usbprint11a021811.pdf).
 
-Capturing one real setup from the app would settle the value encodings and the
-framing at once, and would give a known-good blob to compare against.
+Capturing one real setup from the app would validate the recovered generator,
+settle the USB framing, and give a known-good blob to compare against.
 
 ## Prior work
 

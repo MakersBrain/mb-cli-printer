@@ -133,6 +133,9 @@ in [Printers and transports](docs/printers-and-transports.md).
 | `scan` | scan for BLE devices and detect printer models |
 | `status` | query printer and media status where the protocol supports it |
 | `test` | print a density ramp from 1 through 8 |
+| `wifi` | scan, inspect, or configure a Brother QL's wireless settings |
+| `usb-list` | list attached supported USB printers and stable selectors |
+| `usb-info` | show USB descriptors, IEEE 1284 device ID, and port status |
 | `config` | inspect and change persistent defaults |
 
 Every command accepts `-v`, `-vv`, `-q`, `--log-file`, and `--plain`, before or
@@ -194,6 +197,6 @@ uv sync
 uv run pytest tests -q
 ```
 
-The suite currently contains 85 hardware-free tests. See
+The suite currently contains 88 hardware-free tests. See
 [Development and reverse engineering](docs/development.md) for the module map,
 test coverage, and the Nix-based printer research tools.

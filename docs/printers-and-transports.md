@@ -70,6 +70,12 @@ Replug the printer afterwards. pyusb also needs a libusb shared library on the
 loader path; the flake's dev shell provides one, and elsewhere installing
 `libusb1` system-wide is enough.
 
+When more than one supported USB printer is attached, `mbprint` refuses to
+choose silently. List them with `mbprint usb-list`, then pass the stable
+`--usb-serial SERIAL` selector. `--usb-bus N --usb-address N` is useful when a
+device has no readable serial number, but its address can change after it is
+unplugged.
+
 ## MTU and pacing
 
 Each data write is limited to the smaller of the protocol chunk size and the

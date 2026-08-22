@@ -114,6 +114,7 @@
             dex2jar # dex -> jar, for other Java tooling
             apksigner # re-sign a patched APK
             # native code and general poking
+            binwalk
             radare2
             ripgrep
             jq

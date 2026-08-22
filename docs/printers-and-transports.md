@@ -134,8 +134,10 @@ actual size rather than fitting it to the page.
 
 `--sheet a4|a5|letter|legal` tiles labels. `--columns` and `--rows` force a
 grid, and `--no-marks` removes cut outlines. `--bilevel` applies the selected
-halftone to the PDF. PDF rendering defaults to the layout's 203 dpi scale; it
-does not reproduce the native 300 dpi dot grid of an M04 or Brother print.
+halftone to the PDF. PDF rendering defaults to the layout's own resolution.
+Passing `--model` or `--device` renders at that printer's exact native DPI while
+keeping the physical PDF page size unchanged. An explicit `--scale` overrides
+the selected model's DPI.
 
 For PNG previews:
 

@@ -94,6 +94,9 @@ Create one PDF page per label:
 
 ```sh
 mbprint pdf -l label.json -c inventory.csv -o labels.pdf
+
+# Render the PDF artwork at the selected printer's exact native DPI
+mbprint pdf -l label.json -c inventory.csv --model ql-1110nwb -o labels.pdf
 ```
 
 Print an existing exact-size PDF directly (one page per label):

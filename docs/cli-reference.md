@@ -112,12 +112,13 @@ is rotated automatically. `--fit` explicitly permits scaling a mismatched page.
 | Option | Meaning |
 |---|---|
 | `-o`, `--out PATH` | output path; default `labels.pdf` |
+| `-m`, `--model ID`, `--device NAME` | render at the selected model's native DPI |
 | `--sheet a4\|a5\|letter\|legal` | tile onto a paper sheet |
 | `--margin MM`, `--gap MM` | sheet margin and spacing |
 | `--columns N`, `--rows N` | force a grid |
 | `--no-marks` | omit cut marks |
 | `--bilevel` | apply print halftoning |
-| `--scale N` | render scale; 1 is the layout's 203 dpi baseline |
+| `--scale N` | explicit render scale, overriding automatic model DPI |
 
 ## Preview options
 

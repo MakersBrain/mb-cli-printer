@@ -24,8 +24,6 @@ from mbprint import raster as R
 from mbprint.transport import Transport
 from mbprint.transport import build as build_transport
 
-BASE_DPI = 203.0
-
 # Every command takes the parsed argparse namespace; `_pick` reads attributes
 # that only some subparsers define, falling back to the config file.
 Args = argparse.Namespace
@@ -431,7 +429,7 @@ def _render_scale(
         return mediamod.render_scale(media, label.width_px)
     if not label.dots_per_mm:
         return 1.0
-    return printer.dpi / BASE_DPI * (8.0 / label.dots_per_mm)
+    return printer.dpi / (pdf.MM_PER_INCH * label.dots_per_mm)
 
 
 def _render_all(
@@ -626,7 +624,7 @@ def cmd_preview(args: Args) -> int:
     scale = (
         _render_scale(label, printer, preview_media)
         if preview_media
-        else ((printer.dpi / BASE_DPI) if args.printer_scale else 1.0)
+        else (_render_scale(label, printer) if args.printer_scale else 1.0)
     )
     out_dir = Path(args.out or "preview")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -660,8 +658,20 @@ def cmd_pdf(args: Args) -> int:
     label = _resolve_label(args)
     records = _resolve_records(args)
     _check_missing(label, records, args)
-    images = _render_all(label, records, scale=args.scale, decimal=args.decimal)
-    dots_per_mm = label.dots_per_mm * args.scale
+    model = _pick(args, "model", None)
+    device = _pick(args, "device", None)
+    printer = printers.resolve(model, device) if model or device else None
+    scale = (
+        args.scale
+        if args.scale is not None
+        else (_render_scale(label, printer) if printer else 1.0)
+    )
+    if scale <= 0:
+        raise SystemExit("PDF render scale must be positive")
+    images = _render_all(label, records, scale=scale, decimal=args.decimal)
+    dots_per_mm = label.dots_per_mm * scale
+    if printer is not None:
+        log.info("PDF raster: %s [%s] at %ddpi", printer.name, printer.id, printer.dpi)
     out = args.out or "labels.pdf"
     dither = _pick(args, "dither", "auto")
     if args.sheet:
@@ -1271,6 +1281,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("pdf", help="render records to a PDF instead of printing", parents=[common])
     add_source_options(sp)
     add_render_options(sp)
+    sp.add_argument("--model", "-m", default=None, help="render at this printer model's native DPI")
+    sp.add_argument("--device", default=None, help="device name used to detect a printer model")
     sp.add_argument("--out", "-o", default="labels.pdf", help="output PDF path")
     sp.add_argument(
         "--sheet",
@@ -1288,7 +1300,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="apply the print halftoning so the PDF matches the printed dots",
     )
-    sp.add_argument("--scale", type=float, default=1.0, help="render scale (1 = 203dpi)")
+    sp.add_argument(
+        "--scale",
+        type=float,
+        default=None,
+        help="explicit render scale (overrides the selected model's native DPI)",
+    )
     sp.set_defaults(func=cmd_pdf)
 
     sp = sub.add_parser("preview", help="render records to PNG files", parents=[common])

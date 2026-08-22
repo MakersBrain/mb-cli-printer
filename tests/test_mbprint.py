@@ -281,6 +281,63 @@ def test_pdf_sheet_tiles_labels(tmp_path):
     assert out.exists() and out.stat().st_size > 0
 
 
+@pytest.mark.parametrize(
+    ("model", "dpi", "expected_size"),
+    [("m110", 203, (240, 160)), ("ql-1110nwb", 300, (354, 236))],
+)
+def test_pdf_selected_model_uses_exact_native_dpi(tmp_path, monkeypatch, model, dpi, expected_size):
+    from mbprint import cli
+
+    label_file = tmp_path / "label.json"
+    label_file.write_text(
+        '{"widthMm":30,"heightMm":20,"dotsPerMm":8,"elements":[]}', encoding="utf-8"
+    )
+    captured = {}
+
+    def write_labels(images, out_path, **kwargs):
+        captured["size"] = images[0].size
+        captured["dots_per_mm"] = kwargs["dots_per_mm"]
+        return out_path
+
+    monkeypatch.setattr(pdf, "write_labels", write_labels)
+    assert (
+        cli.main(["pdf", "--label", str(label_file), "--model", model, "--out", "labels.pdf"]) == 0
+    )
+    assert captured["size"] == expected_size
+    assert captured["dots_per_mm"] * pdf.MM_PER_INCH == pytest.approx(dpi)
+
+
+def test_pdf_explicit_scale_overrides_selected_model(tmp_path, monkeypatch):
+    from mbprint import cli
+
+    label_file = tmp_path / "label.json"
+    label_file.write_text(
+        '{"widthMm":30,"heightMm":20,"dotsPerMm":8,"elements":[]}', encoding="utf-8"
+    )
+    captured = {}
+
+    def write_labels(images, out_path, **kwargs):
+        captured["size"] = images[0].size
+        return out_path
+
+    monkeypatch.setattr(pdf, "write_labels", write_labels)
+    assert (
+        cli.main(
+            [
+                "pdf",
+                "--label",
+                str(label_file),
+                "--model",
+                "ql-1110nwb",
+                "--scale",
+                "2",
+            ]
+        )
+        == 0
+    )
+    assert captured["size"] == (480, 320)
+
+
 def test_pdf_page_selection_and_native_dpi_rendering(tmp_path):
     source = pdf.write_labels(
         [Image.new("RGB", (300, 200), "white"), Image.new("RGB", (300, 200), "black")],

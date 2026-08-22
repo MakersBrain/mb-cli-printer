@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
+import json
 import logging
 import os
 import sys
@@ -13,7 +15,7 @@ from typing import Any
 
 from PIL import Image
 
-from mbprint import __version__, ipp, layout, pdf, printers, protocol, ui
+from mbprint import __version__, brother, ipp, layout, pdf, printers, protocol, svg, ui, wireless
 from mbprint import config as cfg
 from mbprint import data as datamod
 from mbprint import log as mblog
@@ -21,8 +23,6 @@ from mbprint import media as mediamod
 from mbprint import raster as R
 from mbprint.transport import Transport
 from mbprint.transport import build as build_transport
-
-BASE_DPI = 203.0
 
 # Every command takes the parsed argparse namespace; `_pick` reads attributes
 # that only some subparsers define, falling back to the config file.
@@ -52,6 +52,13 @@ def _kv(values: list[str] | None, flag: str) -> dict[str, str]:
     return out
 
 
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
+
+
 # --- shared option groups --------------------------------------------------
 
 
@@ -77,8 +84,20 @@ def logging_parser() -> argparse.ArgumentParser:
     return p
 
 
+def add_laposte_format(p: argparse.ArgumentParser, *, help: str, required: bool = False) -> None:
+    p.add_argument(
+        "--laposte-format",
+        required=required,
+        type=str.upper,
+        choices=sorted(pdf.LA_POSTE_FORMATS),
+        help=help,
+    )
+
+
 def add_source_options(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--label", "-l", default=None, help="label.json layout file")
+    p.add_argument(
+        "--label", "-l", default=None, help="layout file: label.json, or an SVG template"
+    )
     p.add_argument("--csv", "-c", default=None, help="CSV of records to print")
     p.add_argument(
         "--data",
@@ -135,6 +154,21 @@ def add_render_options(p: argparse.ArgumentParser) -> None:
     )
 
 
+def add_font_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--font-dir",
+        action="append",
+        metavar="PATH",
+        help="directory containing bundled .ttf/.otf fonts (repeatable)",
+    )
+    p.add_argument(
+        "--font-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="allow font substitution (default; use --no-font-fallback for exact matching)",
+    )
+
+
 def add_printer_options(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--model",
@@ -147,7 +181,7 @@ def add_printer_options(p: argparse.ArgumentParser) -> None:
         "-t",
         default=None,
         choices=["ble", "bluetooth", "tcp", "serial", "usb", "file"],
-        help="transport (default ble; bluetooth for classic SPP, tcp for network)",
+        help="transport (default ble; the wifi command defaults to usb)",
     )
     p.add_argument("--host", default=None, help="printer hostname or IP, for --transport tcp")
     p.add_argument(
@@ -163,8 +197,16 @@ def add_printer_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--baud", type=int, default=115200, help="serial baud rate")
     p.add_argument("--usb-vid", default=None, help="USB vendor id, e.g. 0x0483")
     p.add_argument("--usb-pid", default=None, help="USB product id")
+    p.add_argument("--usb-serial", default=None, help="select one USB printer by serial number")
+    p.add_argument("--usb-bus", type=int, default=None, help="select a USB bus number")
+    p.add_argument("--usb-address", type=int, default=None, help="select a USB device address")
+    p.add_argument("--usb-interface", type=int, default=0, help="USB interface number (default 0)")
+    p.add_argument("--usb-alt", type=int, default=0, help="USB alternate setting (default 0)")
     p.add_argument(
-        "--out", "-o", default=None, help="with --transport file: write the byte stream here"
+        "--out",
+        "-o",
+        default=None,
+        help="capture path for --transport file or a wifi --dry-run",
     )
     p.add_argument("--density", type=int, default=None, help="print density 1-8 (default 6)")
     p.add_argument("--feed", type=int, default=None, help="feed after each label in dots")
@@ -311,7 +353,7 @@ def _ask(question: str) -> bool:
         if console is not None:
             from rich.prompt import Confirm
 
-            return Confirm.ask(f"[yellow]{question}[/yellow]", default=False, console=console)
+            return bool(Confirm.ask(f"[yellow]{question}[/yellow]", default=False, console=console))
         return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
     except (EOFError, KeyboardInterrupt):
         return False
@@ -381,12 +423,20 @@ def _resolve_media(
     args: Args, label: layout.Label, printer: printers.PrinterDef
 ) -> mediamod.Media | None:
     """Which DK roll a Brother job prints on; None for every other family."""
+    return _resolve_media_size(args, label.width_mm, label.height_mm, printer)
+
+
+def _resolve_media_size(
+    args: Args, width_mm: float, height_mm: float, printer: printers.PrinterDef
+) -> mediamod.Media | None:
+    """Resolve Brother media from an arbitrary physical page size."""
     if printer.protocol != "brother":
         return None
     explicit = _pick(args, "media", None)
-    media = (mediamod.by_id(explicit) if explicit else None) or _printer_media(args, printer)
+    media = mediamod.resolve(explicit, width_mm, height_mm, printer.id) if explicit else None
+    media = media or _printer_media(args, printer)
     if media is None:
-        media = mediamod.resolve(explicit, label.width_mm, label.height_mm, printer.id)
+        media = mediamod.resolve(None, width_mm, height_mm, printer.id)
     log.info(
         "media: %s (%s), printable %dx%s dots, %d dots right margin",
         media.id,
@@ -406,7 +456,7 @@ def _render_scale(
         return mediamod.render_scale(media, label.width_px)
     if not label.dots_per_mm:
         return 1.0
-    return printer.dpi / BASE_DPI * (8.0 / label.dots_per_mm)
+    return printer.dpi / (pdf.MM_PER_INCH * label.dots_per_mm)
 
 
 def _render_all(
@@ -416,6 +466,14 @@ def _render_all(
     decimal: str = ",",
 ) -> list[Image.Image]:
     return [layout.render(label, record, scale=scale, decimal=decimal) for record in records]
+
+
+def _configure_label_fonts(args: Args, label: layout.Label) -> None:
+    layout.configure_fonts(
+        source=label.source,
+        font_dirs=getattr(args, "font_dir", None),
+        allow_fallback=bool(_pick(args, "font_fallback", True)),
+    )
 
 
 def _print_options(
@@ -489,7 +547,17 @@ def _make_transport(args: Args, printer: printers.PrinterDef | None) -> Transpor
     if kind == "usb":
         vid = int(args.usb_vid, 0) if args.usb_vid else None
         pid = int(args.usb_pid, 0) if args.usb_pid else None
-        return build_transport("usb", vid=vid, pid=pid, max_write=mtu or 512)
+        return build_transport(
+            "usb",
+            vid=vid,
+            pid=pid,
+            max_write=mtu or 512,
+            interface=getattr(args, "usb_interface", 0),
+            alternate=getattr(args, "usb_alt", 0),
+            serial=getattr(args, "usb_serial", None),
+            bus=getattr(args, "usb_bus", None),
+            address=getattr(args, "usb_address", None),
+        )
     if kind == "file":
         return build_transport("file", path=args.out or "-", max_write=mtu or 512)
     raise SystemExit(f"unknown transport {kind!r}")
@@ -584,6 +652,7 @@ def cmd_fields(args: Args) -> int:
 
 def cmd_preview(args: Args) -> int:
     label = _resolve_label(args)
+    _configure_label_fonts(args, label)
     records = _resolve_records(args)
     _check_missing(label, records, args)
     printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
@@ -591,7 +660,7 @@ def cmd_preview(args: Args) -> int:
     scale = (
         _render_scale(label, printer, preview_media)
         if preview_media
-        else ((printer.dpi / BASE_DPI) if args.printer_scale else 1.0)
+        else (_render_scale(label, printer) if args.printer_scale else 1.0)
     )
     out_dir = Path(args.out or "preview")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -623,10 +692,23 @@ def cmd_preview(args: Args) -> int:
 
 def cmd_pdf(args: Args) -> int:
     label = _resolve_label(args)
+    _configure_label_fonts(args, label)
     records = _resolve_records(args)
     _check_missing(label, records, args)
-    images = _render_all(label, records, scale=args.scale, decimal=args.decimal)
-    dots_per_mm = label.dots_per_mm * args.scale
+    model = _pick(args, "model", None)
+    device = _pick(args, "device", None)
+    printer = printers.resolve(model, device) if model or device else None
+    scale = (
+        args.scale
+        if args.scale is not None
+        else (_render_scale(label, printer) if printer else 1.0)
+    )
+    if scale <= 0:
+        raise SystemExit("PDF render scale must be positive")
+    images = _render_all(label, records, scale=scale, decimal=args.decimal)
+    dots_per_mm = label.dots_per_mm * scale
+    if printer is not None:
+        log.info("PDF raster: %s [%s] at %ddpi", printer.name, printer.id, printer.dpi)
     out = args.out or "labels.pdf"
     dither = _pick(args, "dither", "auto")
     if args.sheet:
@@ -657,8 +739,40 @@ def cmd_pdf(args: Args) -> int:
     return 0
 
 
+def cmd_svg(args: Args) -> int:
+    """Write one exact-size SVG file per expanded label record."""
+    label = _resolve_label(args)
+    _configure_label_fonts(args, label)
+    records = _resolve_records(args)
+    _check_missing(label, records, args)
+    destination = Path(args.out or "svg")
+    single_file = len(records) == 1 and destination.suffix.lower() == ".svg"
+    if not single_file:
+        destination.mkdir(parents=True, exist_ok=True)
+    for index, record in enumerate(records, 1):
+        name = (record.get("ref") or record.get("sku") or f"label{index}").replace("/", "-")
+        path = destination if single_file else destination / f"{index:03d}-{name}.svg"
+        svg.write(label, record, path, decimal=args.decimal)
+        print(path)
+    return 0
+
+
+def cmd_import_svg(args: Args) -> int:
+    """Convert an SVG document into an editable label.json layout."""
+    from mbprint import svgimport
+
+    path, warnings = svgimport.write(args.svg_file, args.out)
+    for warning in warnings:
+        log.warning("%s", warning)
+    print(path)
+    if warnings:
+        print(f"converted with {len(warnings)} warning(s)", file=sys.stderr)
+    return 0
+
+
 def cmd_print(args: Args) -> int:
     label = _resolve_label(args)
+    _configure_label_fonts(args, label)
     records = _resolve_records(args)
     _check_missing(label, records, args)
     printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
@@ -674,6 +788,23 @@ def cmd_print(args: Args) -> int:
             img = mediamod.fit(img, media, printer.min_rows)
         rasters.append(protocol.prepare_raster(img, printer, opts, dither))
 
+    label_ids = [
+        record.get("ref") or record.get("sku") or str(i) for i, record in enumerate(records, 1)
+    ]
+    return _send_rasters(args, printer, opts, rasters, label_ids, dither)
+
+
+def _send_rasters(
+    args: Args,
+    printer: printers.PrinterDef,
+    opts: protocol.PrintOptions,
+    rasters: list[R.Raster],
+    label_ids: list[str],
+    dither: str,
+) -> int:
+    """Send already prepared labels through the common transport/progress flow."""
+    if not rasters:
+        raise SystemExit("nothing to print")
     log.info(
         "printer: %s [%s] %s %ddpi head=%s%s",
         printer.name,
@@ -713,8 +844,7 @@ def cmd_print(args: Args) -> int:
             show_bar = not args.quiet and not args.verbose
             with ui.progress(len(rasters), show_bar, args.plain) as bar:
                 for i, rst in enumerate(rasters, 1):
-                    record = records[i - 1]
-                    label_id = record.get("ref") or record.get("sku") or str(i)
+                    label_id = label_ids[i - 1]
                     log.debug("label %d/%d: %s", i, len(rasters), label_id)
                     bar.label(i, len(rasters), label_id)
                     await protocol.print_raster(transport, printer, rst, opts, bar.chunk)
@@ -739,6 +869,109 @@ def cmd_print(args: Args) -> int:
             )
 
     asyncio.run(run())
+    return 0
+
+
+def _pdf_page_on_media(
+    page: pdf.RenderedPage, media: mediamod.Media, printer: printers.PrinterDef, allow_fit: bool
+) -> Image.Image:
+    """Validate page geometry, auto-rotate a transposed page, then fit printable margins."""
+    tolerance = 1.5
+    width, height = page.width_mm, page.height_mm
+    direct = abs(width - media.width_mm) <= tolerance and (
+        media.continuous or abs(height - media.length_mm) <= tolerance
+    )
+    transposed = abs(height - media.width_mm) <= tolerance and (
+        media.continuous or abs(width - media.length_mm) <= tolerance
+    )
+    image = page.image
+    if not direct and transposed:
+        image = image.transpose(Image.Transpose.ROTATE_90)
+        direct = True
+    if not direct and not allow_fit:
+        expected = (
+            f"{media.width_mm:g}mm wide"
+            if media.continuous
+            else f"{media.width_mm:g}x{media.length_mm:g}mm"
+        )
+        raise SystemExit(
+            f"PDF page {page.number} is {width:.2f}x{height:.2f}mm, but {media.id} media is "
+            f"{expected}; use a correctly sized PDF or pass --fit"
+        )
+    return mediamod.fit(image, media, printer.min_rows)
+
+
+def cmd_print_pdf(args: Args) -> int:
+    """Rasterize an exact-size PDF and print each selected page as one label."""
+    printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
+    pages = pdf.render_pages(args.pdf_file, printer.dpi, args.pages)
+    if args.laposte_format:
+        pages = pdf.extract_la_poste_labels(pages, args.laposte_format)
+    first = pages[0]
+    for page in pages[1:]:
+        if abs(page.width_mm - first.width_mm) > 0.5 or abs(page.height_mm - first.height_mm) > 0.5:
+            raise SystemExit(
+                f"PDF pages must have one label size; page 1 is "
+                f"{first.width_mm:.2f}x{first.height_mm:.2f}mm and page {page.number} is "
+                f"{page.width_mm:.2f}x{page.height_mm:.2f}mm"
+            )
+    media = _resolve_media_size(args, first.width_mm, first.height_mm, printer)
+    opts = _print_options(args, printer, media=media)
+    opts.label_width_mm = first.width_mm
+    opts.label_height_mm = first.height_mm
+    dither = _pick(args, "dither", "auto")
+    rasters: list[R.Raster] = []
+    label_ids: list[str] = []
+    for page in pages:
+        image = (
+            _pdf_page_on_media(page, media, printer, args.fit) if media is not None else page.image
+        )
+        if media is None and args.fit:
+            image = mediamod.fit_to_head(image, printer.width_px, printer.rotated)
+        raster = protocol.prepare_raster(image, printer, opts, dither)
+        for copy in range(1, args.copies + 1):
+            rasters.append(raster)
+            label_id = f"page {page.number}"
+            if page.slot is not None:
+                label_id += f" slot {page.slot}"
+            if args.copies > 1:
+                label_id += f" copy {copy}"
+            label_ids.append(label_id)
+    log.info(
+        "PDF: %s, pages=%s, size=%.2fx%.2fmm at %ddpi",
+        args.pdf_file,
+        ",".join(str(page.number) for page in pages),
+        first.width_mm,
+        first.height_mm,
+        printer.dpi,
+    )
+    return _send_rasters(args, printer, opts, rasters, label_ids, dither)
+
+
+def cmd_extract_pdf(args: Args) -> int:
+    """Convert a La Poste A4 sheet into one exact-size stamp per PDF page."""
+    model, device = _pick(args, "model", None), _pick(args, "device", None)
+    if args.dpi:
+        dpi = args.dpi
+    elif model or device:
+        printer = printers.resolve(model, device)
+        dpi = printer.dpi
+        log.info("PDF raster: %s [%s] at %ddpi", printer.name, printer.id, printer.dpi)
+    else:
+        dpi = 254
+    pages = pdf.render_pages(args.pdf_file, dpi, args.pages)
+    labels = pdf.extract_la_poste_labels(pages, args.laposte_format)
+    path = pdf.write_labels(
+        [label.image for label in labels],
+        args.out,
+        dots_per_mm=dpi / pdf.MM_PER_INCH,
+        title="La Poste - Mon Timbre en Ligne",
+        page_size_mm=(labels[0].width_mm, labels[0].height_mm),
+    )
+    print(
+        f"{path}  ({len(labels)} label{'s' if len(labels) != 1 else ''}, "
+        f"{labels[0].width_mm:g}x{labels[0].height_mm:g}mm)"
+    )
     return 0
 
 
@@ -860,6 +1093,252 @@ def cmd_config(args: Args) -> int:
     raise SystemExit(f"unknown config action {args.action!r}")
 
 
+def cmd_wifi(args: Args) -> int:
+    """Inspect or configure Brother's native Wi-Fi settings protocol."""
+    if args.action in ("scan", "status"):
+
+        async def query() -> None:
+            transport = _make_transport(args, None)
+            async with transport:
+                if args.action == "scan":
+                    await transport.send(wireless.wifi_scan_start_command())
+                    await transport.delay(round(args.scan_wait * 1000))
+                    await transport.send(wireless.wifi_scan_result_command())
+                    reply = await _collect_response(transport, 3000)
+                    points = wireless.parse_access_points(reply)
+                    if points:
+                        print("SSID                             CH  POWER  SECURITY")
+                        for point in points:
+                            security = (
+                                "enterprise"
+                                if point.enterprise
+                                else "encrypted"
+                                if point.encrypted
+                                else "open"
+                            )
+                            print(
+                                f"{point.ssid[:32]:<32} {point.channel:>3} {point.power:>6}  {security}"
+                            )
+                    else:
+                        print("no access points decoded (the printer may not support this query)")
+                else:
+                    oids = [
+                        "458867",  # connected
+                        "458967.2",  # IPv4
+                        "458877",  # SSID
+                        "458880",  # encryption
+                        "458881",  # authentication
+                        "459138.2",  # infrastructure mode
+                        "459138.3",  # Wireless Direct
+                    ]
+                    replies: dict[str, bytes] = {}
+                    for oid in oids:
+                        await transport.send(wireless.inquire_command(oid))
+                        replies[oid] = await _collect_response(transport, 3000)
+                    reply = b"".join(replies.values())
+                    connected = wireless.parse_wifi_status(replies["458867"])
+                    address = wireless.parse_ip_address(replies["458967.2"])
+                    state = (
+                        "connected"
+                        if connected
+                        else "disconnected"
+                        if connected is False
+                        else "unknown"
+                    )
+                    print(f"wifi: {state}")
+                    print(f"ipv4: {address or 'unknown'}")
+                    ssid = wireless.parse_oid_value(replies["458877"], "458877")
+                    encryption = wireless.parse_oid_value(replies["458880"], "458880")
+                    authentication = wireless.parse_oid_value(replies["458881"], "458881")
+                    encryption_names = {
+                        str(value): name for name, value in wireless.ENCRYPTIONS.items()
+                    }
+                    authentication_names = {
+                        str(value): name for name, value in wireless.AUTHENTICATIONS.items()
+                    }
+                    print(f"ssid: {ssid or 'unknown'}")
+                    print(
+                        "encryption: "
+                        + (
+                            encryption_names.get(encryption, encryption)
+                            if encryption
+                            else "unknown"
+                        )
+                    )
+                    print(
+                        "authentication: "
+                        + (
+                            authentication_names.get(authentication, authentication)
+                            if authentication
+                            else "unknown"
+                        )
+                    )
+                    infrastructure = wireless.parse_oid_value(replies["459138.2"], "459138.2")
+                    wireless_direct = wireless.parse_oid_value(replies["459138.3"], "459138.3")
+                    print(f"infrastructure: {_enabled(infrastructure)}")
+                    print(f"wireless direct: {_enabled(wireless_direct)}")
+                if args.raw:
+                    print(f"raw ({len(reply)} bytes): {reply.hex(' ') if reply else '(no reply)'}")
+
+        asyncio.run(query())
+        return 0
+
+    if not args.ssid:
+        raise SystemExit("wifi configure needs --ssid NAME")
+    password = args.password
+    if args.password_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+    elif password is None and args.authentication != "open":
+        if not sys.stdin.isatty():
+            raise SystemExit("password required; use --password-stdin or --password")
+        password = getpass.getpass("Wi-Fi password: ")
+
+    settings = wireless.WirelessSettings(
+        ssid=args.ssid,
+        password=password or "",
+        encryption=args.encryption,
+        authentication=args.authentication,
+        infrastructure=not args.no_infrastructure,
+        wireless_direct=args.wireless_direct,
+        reboot=not args.no_reboot,
+    )
+    try:
+        command = settings.command()
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+    if args.dry_run:
+        Path(args.out or "brother-wifi.bin").write_bytes(command)
+        print(f"wrote {len(command)} credential-bearing bytes to {args.out or 'brother-wifi.bin'}")
+        return 0
+    if not args.yes and not _ask(
+        f"Configure {args.ssid!r} and reboot the printer? This changes its network settings."
+    ):
+        raise SystemExit("cancelled")
+
+    async def send() -> None:
+        transport = _make_transport(args, None)
+        async with transport:
+            await transport.send(command)
+        print(f"sent {len(command)} bytes via {transport.name}; the printer may now reboot")
+
+    asyncio.run(send())
+    return 0
+
+
+async def _collect_response(
+    transport: Transport, first_timeout_ms: int, idle_timeout_ms: int = 250
+) -> bytes:
+    """Collect a possibly packetized response until the receive side goes idle."""
+    chunks: list[bytes] = []
+    reply = await transport.wait_for_response(first_timeout_ms)
+    while reply:
+        chunks.append(reply)
+        reply = await transport.wait_for_response(idle_timeout_ms)
+    return b"".join(chunks)
+
+
+def _enabled(value: str | None) -> str:
+    return "enabled" if value == "1" else "disabled" if value == "0" else "unknown"
+
+
+def cmd_usb_info(args: Args) -> int:
+    """Show descriptors and standard Printer Class information without changing settings."""
+    from mbprint.transport.usb import USBTransport
+
+    async def query() -> None:
+        transport = _make_transport(args, None)
+        if not isinstance(transport, USBTransport):
+            raise SystemExit("usb-info requires --transport usb")
+        async with transport:
+            info = transport.device_info
+            print(f"device:       {info['vid']:04x}:{info['pid']:04x}")
+            print(f"location:     bus {info['bus']} address {info['address']}")
+            print(f"manufacturer: {info['manufacturer'] or 'unknown'}")
+            print(f"product:      {info['product'] or 'unknown'}")
+            print(f"serial:       {info['serial'] or 'unknown'}")
+            print(
+                f"interface:    {info['interface']} alt {info['alternate']} "
+                f"protocol {info['protocol']}"
+            )
+            endpoint_in = info["in_endpoint"]
+            print(
+                f"endpoints:    OUT 0x{info['out_endpoint']:02x}, "
+                + (f"IN 0x{endpoint_in:02x}" if endpoint_in is not None else "IN none")
+                + f", {info['packet_size']}-byte packets"
+            )
+            device_id = await transport.get_device_id()
+            port = await transport.get_port_status()
+            print(f"device ID:    {device_id or 'unavailable'}")
+            if port is None:
+                print("port status:  unavailable")
+            else:
+                print(
+                    "port status:  "
+                    + ("selected" if port["selected"] else "not selected")
+                    + (", paper empty" if port["paper_empty"] else ", paper present")
+                    + (", error" if port["error"] else ", no error")
+                )
+
+    asyncio.run(query())
+    return 0
+
+
+def cmd_usb_report(args: Args) -> int:
+    """Fetch the Brother read-only printer configuration/system report."""
+    from mbprint.transport.usb import USBTransport
+
+    async def query() -> None:
+        transport = _make_transport(args, None)
+        if not isinstance(transport, USBTransport):
+            raise SystemExit("usb-report requires --transport usb")
+        async with transport:
+            if transport.device_info["vid"] != 0x04F9:
+                raise SystemExit("usb-report is only supported for Brother printers")
+            await transport.send(brother.SYSTEM_REPORT_COMMAND)
+            response = await _collect_response(transport, 3000)
+        if not response:
+            raise SystemExit("printer did not return a system report")
+        try:
+            if args.json:
+                output = json.dumps(brother.parse_system_report(response), indent=2)
+            else:
+                output = brother.decode_system_report(response)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+        if args.out:
+            Path(args.out).write_text(output + "\n", encoding="utf-8")
+            print(f"wrote system report to {args.out}")
+        else:
+            print(output)
+
+    asyncio.run(query())
+    return 0
+
+
+def cmd_usb_list(args: Args) -> int:
+    """List supported USB printers without claiming their interfaces."""
+    from mbprint.transport.usb import describe_usb_device, find_usb_devices
+
+    vid = int(args.usb_vid, 0) if args.usb_vid else None
+    pid = int(args.usb_pid, 0) if args.usb_pid else None
+    devices = [describe_usb_device(dev) for dev in find_usb_devices(vid, pid)]
+    if not devices:
+        print("no supported USB printers found")
+        return 0
+    print("BUS  ADDR  USB ID     SERIAL                    PRODUCT")
+    for info in devices:
+        bus = str(info["bus"]) if info["bus"] is not None else "?"
+        address = str(info["address"]) if info["address"] is not None else "?"
+        serial = info["serial"] or "-"
+        product = info["product"] or info["manufacturer"] or "unknown"
+        print(
+            f"{bus:>3}  {address:>4}  {info['vid']:04x}:{info['pid']:04x}  "
+            f"{serial[:24]:<24}  {product}"
+        )
+    return 0
+
+
 # --- parser ----------------------------------------------------------------
 
 
@@ -867,7 +1346,7 @@ def build_parser() -> argparse.ArgumentParser:
     common = logging_parser()
     p = argparse.ArgumentParser(
         prog="mbprint",
-        description="Print label.json layouts on Phomemo printers, or export them as PDF.",
+        description="Print label.json layouts, or export them as PDF, SVG, and PNG.",
         parents=[common],
     )
     sub = p.add_subparsers(dest="command", required=True)
@@ -875,6 +1354,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("print", help="render records and print them", parents=[common])
     add_source_options(sp)
     add_render_options(sp)
+    add_font_options(sp)
     add_printer_options(sp)
     sp.add_argument(
         "--dry-run",
@@ -884,9 +1364,56 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.set_defaults(func=cmd_print)
 
+    sp = sub.add_parser(
+        "print-pdf", help="print each exact-size PDF page as one label", parents=[common]
+    )
+    sp.add_argument("pdf_file", metavar="PDF", help="PDF whose pages are individual labels")
+    add_render_options(sp)
+    add_printer_options(sp)
+    sp.add_argument("--pages", help="one-based pages and ranges, e.g. 1,3-5 (default all)")
+    sp.add_argument("--copies", type=_positive_int, default=1, help="copies of each page")
+    add_laposte_format(
+        sp, help="extract occupied Mon Timbre en Ligne stamps from this A4 output format"
+    )
+    sp.add_argument(
+        "--fit",
+        action="store_true",
+        help="allow scaling to mismatched Brother media or a narrower print head",
+    )
+    sp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="render and simulate printing; with --out, capture the printer bytes",
+    )
+    sp.set_defaults(func=cmd_print_pdf)
+
+    sp = sub.add_parser(
+        "extract-pdf",
+        help="convert a La Poste A4 PDF to one exact-size stamp per page",
+        parents=[common],
+    )
+    sp.add_argument("pdf_file", metavar="PDF", help="Mon Timbre en Ligne A4 PDF")
+    add_laposte_format(
+        sp, required=True, help="format selected on La Poste's printing-options page"
+    )
+    sp.add_argument("--pages", help="one-based source pages and ranges, e.g. 1,3-5 (default all)")
+    sp.add_argument("--model", "-m", default=None, help="use this printer model's native DPI")
+    sp.add_argument("--device", default=None, help="device name used to detect a printer model")
+    sp.add_argument(
+        "--dpi",
+        type=_positive_int,
+        default=None,
+        help="output raster DPI (overrides --model/--device; default 254)",
+    )
+    sp.add_argument("--out", "-o", default="labels.pdf", help="output PDF (default labels.pdf)")
+    sp.set_defaults(func=cmd_extract_pdf)
+
     sp = sub.add_parser("pdf", help="render records to a PDF instead of printing", parents=[common])
     add_source_options(sp)
     add_render_options(sp)
+    add_font_options(sp)
+    sp.add_argument("--model", "-m", default=None, help="render at this printer model's native DPI")
+    sp.add_argument("--device", default=None, help="device name used to detect a printer model")
     sp.add_argument("--out", "-o", default="labels.pdf", help="output PDF path")
     sp.add_argument(
         "--sheet",
@@ -904,12 +1431,36 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="apply the print halftoning so the PDF matches the printed dots",
     )
-    sp.add_argument("--scale", type=float, default=1.0, help="render scale (1 = 203dpi)")
+    sp.add_argument(
+        "--scale",
+        type=float,
+        default=None,
+        help="explicit render scale (overrides the selected model's native DPI)",
+    )
     sp.set_defaults(func=cmd_pdf)
+
+    sp = sub.add_parser("svg", help="render records to exact-size SVG files", parents=[common])
+    add_source_options(sp)
+    add_font_options(sp)
+    sp.add_argument(
+        "--out",
+        "-o",
+        default="svg",
+        help="output directory, or a .svg path when rendering one record",
+    )
+    sp.set_defaults(func=cmd_svg)
+
+    sp = sub.add_parser(
+        "import-svg", help="convert an SVG document to editable label.json", parents=[common]
+    )
+    sp.add_argument("svg_file", metavar="SVG", help="SVG document to convert")
+    sp.add_argument("--out", "-o", default="label.json", help="output label.json path")
+    sp.set_defaults(func=cmd_import_svg)
 
     sp = sub.add_parser("preview", help="render records to PNG files", parents=[common])
     add_source_options(sp)
     add_render_options(sp)
+    add_font_options(sp)
     sp.add_argument("--model", "-m", default=None, help="printer model, for raster preview")
     sp.add_argument("--device", default=None, help="BLE device name, for model auto-detect")
     sp.add_argument("--align", default=None, choices=["left", "center", "right"])
@@ -956,6 +1507,45 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("key", nargs="?", help="a scalar key, or data.<field> for a template")
     sp.add_argument("value", nargs="?")
     sp.set_defaults(func=cmd_config)
+
+    sp = sub.add_parser("wifi", help="inspect or configure Brother QL Wi-Fi", parents=[common])
+    add_printer_options(sp)
+    sp.add_argument(
+        "action", nargs="?", choices=["configure", "scan", "status"], default="configure"
+    )
+    sp.add_argument("--ssid", help="network name (configure action)")
+    secret = sp.add_mutually_exclusive_group()
+    secret.add_argument("--password", help="network password (visible in the process list)")
+    secret.add_argument(
+        "--password-stdin", action="store_true", help="read one password line from stdin"
+    )
+    sp.add_argument("--encryption", choices=sorted(wireless.ENCRYPTIONS), default="tkip-aes")
+    sp.add_argument("--authentication", choices=sorted(wireless.AUTHENTICATIONS), default="wpa-psk")
+    sp.add_argument("--no-infrastructure", action="store_true")
+    sp.add_argument("--wireless-direct", action="store_true")
+    sp.add_argument("--no-reboot", action="store_true")
+    sp.add_argument("--yes", action="store_true", help="send without confirmation")
+    sp.add_argument("--scan-wait", type=float, default=5.0, help="seconds to wait for AP scan")
+    sp.add_argument("--raw", action="store_true", help="also print the unparsed response bytes")
+    sp.add_argument(
+        "--dry-run", action="store_true", help="write the command to --out without sending it"
+    )
+    sp.set_defaults(func=cmd_wifi, transport="usb")
+
+    sp = sub.add_parser("usb-list", help="list supported USB printers", parents=[common])
+    add_printer_options(sp)
+    sp.set_defaults(func=cmd_usb_list, transport="usb")
+
+    sp = sub.add_parser("usb-info", help="show read-only USB printer information", parents=[common])
+    add_printer_options(sp)
+    sp.set_defaults(func=cmd_usb_info, transport="usb")
+
+    sp = sub.add_parser(
+        "usb-report", help="fetch a Brother configuration/system report", parents=[common]
+    )
+    add_printer_options(sp)
+    sp.add_argument("--json", action="store_true", help="emit parsed sections as JSON")
+    sp.set_defaults(func=cmd_usb_report, transport="usb")
 
     return p
 

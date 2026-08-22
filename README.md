@@ -1,12 +1,12 @@
 # mb-cli-printer
 
 Render `label.json` layouts with CSV data, then print them on Phomemo and
-Brother label printers or export them as PDF and PNG.
+Brother label printers or export them as PDF, SVG, and PNG.
 
 `mbprint` supports BLE, classic Bluetooth, TCP, serial, USB, and capture-to-file
 transports. It includes eight printer protocol families, automatic BLE MTU
-handling, reusable field templates, label alignment controls, exact-size and
-tiled PDFs, and hardware-free dry runs.
+handling, reusable field templates, label alignment controls, exact-size PDF
+and SVG output, tiled PDFs, and hardware-free dry runs.
 
 ## Install
 
@@ -15,7 +15,8 @@ The project uses [uv](https://docs.astral.sh/uv/):
 ```sh
 uv sync --no-dev                    # runtime dependencies
 uv sync --no-dev --extra tui        # + colored logs and live progress bars
-uv sync --no-dev --all-extras       # + USB and barcode support
+uv sync --no-dev --extra fonts      # + every maintained font bundle
+uv sync --no-dev --all-extras       # + all transports, renderers, and fonts
 ```
 
 Optional extras are off by default:
@@ -25,6 +26,45 @@ Optional extras are off by default:
 | `tui` | `rich` | colored logs and live progress bars |
 | `usb` | `pyusb` | `--transport usb` |
 | `barcode` | `python-barcode` | barcode elements in layouts |
+| `fonts` | all four font wheels | DejaVu, Phomymo, Nerd, and compatible fonts |
+| `fonts-dejavu` | DejaVu Sans/Serif/Mono | only the compact core bundle |
+| `fonts-phomymo` | ten open web-font families | Phomymo `label.json` fonts |
+| `fonts-nerd` | JetBrainsMono Nerd Font | Nerd Font text and symbols |
+| `fonts-compatible` | free substitutes | optional proprietary-font aliases |
+
+### Install all fonts
+
+For a runtime installation containing every maintained font:
+
+```sh
+uv sync --no-dev --extra fonts
+```
+
+For development, keep the test dependencies too:
+
+```sh
+uv sync --extra fonts
+```
+
+Installed font wheels are discovered automatically. No `--font-dir` or system
+font installation is required for their families. The aggregate includes:
+
+- DejaVu Sans, Serif, and Sans Mono;
+- Inter, Roboto, Open Sans, Lato, Montserrat, Oswald, Playfair Display,
+  Merriweather, Roboto Mono, and Source Code Pro;
+- JetBrainsMono Nerd Font;
+- Liberation Sans/Serif/Mono, Gelasio, Anton, and Comic Neue.
+
+Font fallback is enabled by default. Unavailable Arial, Helvetica, Georgia,
+Times New Roman, Courier New, Impact, and Comic Sans MS use their free aliases
+and emit a warning. Require exact fonts for one command with:
+
+```sh
+mbprint pdf -l label.json --no-font-fallback -o labels.pdf
+```
+
+See [Fonts in label.json](docs/data-and-templates.md#fonts-in-labeljson) for
+the mappings, individual installation extras, and custom font directories.
 
 Run the command through uv:
 
@@ -94,6 +134,34 @@ Create one PDF page per label:
 
 ```sh
 mbprint pdf -l label.json -c inventory.csv -o labels.pdf
+
+# Render the PDF artwork at the selected printer's exact native DPI
+mbprint pdf -l label.json -c inventory.csv --model ql-1110nwb -o labels.pdf
+```
+
+Print an existing exact-size PDF directly (one page per label):
+
+```sh
+mbprint print-pdf labels.pdf --model ql-1110nwb --transport usb
+mbprint print-pdf labels.pdf --model m110 --transport usb
+```
+
+Export editable exact-size SVG files:
+
+```sh
+mbprint svg -l label.json -c inventory.csv -o vectors/
+```
+
+Convert an SVG back to an editable JSON layout:
+
+```sh
+mbprint import-svg label.svg -o converted.json
+```
+
+Print from an SVG drawn in a design tool, placeholders and all:
+
+```sh
+mbprint print -l label.svg -c inventory.csv --model m110
 ```
 
 Tile labels on A4 with cut marks:
@@ -120,19 +188,29 @@ mbprint print -l label.json -c inventory.csv --model m110 \
 Capture the framed bytes by adding `--out job.bin`. Details about PDF fidelity,
 printer raster previews, alignment, protocols, media, and connection methods are
 in [Printers and transports](docs/printers-and-transports.md).
+The complete generate-to-print workflow is in
+[PDF generation and direct printing](docs/pdf-workflows.md).
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
 | `print` | render records and send them to a printer |
+| `print-pdf` | rasterize and print one exact-size label per PDF page |
+| `extract-pdf` | split a La Poste A4 PDF into one exact-size stamp per page |
 | `pdf` | render records to a PDF |
+| `svg` | render one exact-size SVG file per label |
+| `import-svg` | convert SVG back to an editable `label.json` layout |
 | `preview` | render records to PNG, optionally as the fitted printer raster |
 | `fields` | inspect placeholders and CSV mappings |
 | `printers` | list known models, protocols, head widths, and resolutions |
 | `scan` | scan for BLE devices and detect printer models |
 | `status` | query printer and media status where the protocol supports it |
 | `test` | print a density ramp from 1 through 8 |
+| `wifi` | scan, inspect, or configure a Brother QL's wireless settings |
+| `usb-list` | list attached supported USB printers and stable selectors |
+| `usb-info` | show USB descriptors, IEEE 1284 device ID, and port status |
+| `usb-report` | fetch a Brother configuration/system report over USB |
 | `config` | inspect and change persistent defaults |
 
 Every command accepts `-v`, `-vv`, `-q`, `--log-file`, and `--plain`, before or
@@ -149,12 +227,15 @@ mbprint config set model m110
 mbprint config set align right
 mbprint config set offset_x 6
 mbprint config set density 7
+mbprint config set font_fallback false  # persist strict font matching
 mbprint config set data.brand "Example Ceramics"
 mbprint config list
 ```
 
 The configuration is one active set of defaults, not a collection of per-model
-profiles. Command-line values override it.
+profiles. Command-line values override it. Font fallback defaults to true;
+`--no-font-fallback` disables it for one command, while a configured false
+value makes strict matching persistent.
 
 ## Troubleshooting
 
@@ -180,8 +261,12 @@ More model- and transport-specific guidance is in
 ## Documentation
 
 - [Data, templates, and filters](docs/data-and-templates.md)
+- [PDF generation and direct printing](docs/pdf-workflows.md)
+- [SVG export and import](docs/svg-export.md)
+- [SVG labels as templates](docs/svg-templates.md)
 - [Printers and transports](docs/printers-and-transports.md)
 - [CLI reference](docs/cli-reference.md)
+- [Brother wireless configuration](docs/brother-wireless-config.md)
 - [Development and reverse engineering](docs/development.md)
 
 ## Development
@@ -193,6 +278,5 @@ uv sync
 uv run pytest tests -q
 ```
 
-The suite currently contains 85 hardware-free tests. See
-[Development and reverse engineering](docs/development.md) for the module map,
-test coverage, and the Nix-based printer research tools.
+See [Development and reverse engineering](docs/development.md) for the
+hardware-free test suite, module map, and Nix-based printer research tools.

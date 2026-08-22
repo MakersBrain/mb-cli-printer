@@ -35,6 +35,7 @@ KNOWN_KEYS: dict[str, type] = {
     "label": str,
     "media": str,
     "host": str,
+    "font_fallback": bool,
 }
 
 # Derived field templates live under "data" as a table: data.qr, data.brand, ...

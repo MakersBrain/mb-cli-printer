@@ -53,6 +53,29 @@ On Linux, USB normally needs a udev rule granting access to the device. Known
 vendor IDs include `04f9` for Brother and `0483` or `2e3c` for Phomemo. Install
 the `usb` extra before using this transport.
 
+`udev/99-mbprint.rules` covers all three vendors:
+
+```sh
+sudo cp udev/99-mbprint.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+On NixOS, add the rules to the system configuration instead:
+
+```nix
+services.udev.extraRules = builtins.readFile ./udev/99-mbprint.rules;
+```
+
+Replug the printer afterwards. pyusb also needs a libusb shared library on the
+loader path; the flake's dev shell provides one, and elsewhere installing
+`libusb1` system-wide is enough.
+
+When more than one supported USB printer is attached, `mbprint` refuses to
+choose silently. List them with `mbprint usb-list`, then pass the stable
+`--usb-serial SERIAL` selector. `--usb-bus N --usb-address N` is useful when a
+device has no readable serial number, but its address can change after it is
+unplugged.
+
 ## MTU and pacing
 
 Each data write is limited to the smaller of the protocol chunk size and the
@@ -111,8 +134,13 @@ actual size rather than fitting it to the page.
 
 `--sheet a4|a5|letter|legal` tiles labels. `--columns` and `--rows` force a
 grid, and `--no-marks` removes cut outlines. `--bilevel` applies the selected
-halftone to the PDF. PDF rendering defaults to the layout's 203 dpi scale; it
-does not reproduce the native 300 dpi dot grid of an M04 or Brother print.
+halftone to the PDF. PDF rendering defaults to the layout's own resolution.
+Passing `--model` or `--device` renders at that printer's exact native DPI while
+keeping the physical PDF page size unchanged. An explicit `--scale` overrides
+the selected model's DPI.
+
+For direct PDF input, page ranges, copies, Brother media validation, and dry
+runs, see [PDF generation and direct printing](pdf-workflows.md).
 
 For PNG previews:
 
@@ -125,8 +153,8 @@ For PNG previews:
 ## Brother QL
 
 The QL-1100 series uses Brother ESC/P raster commands and fixed DK roll
-geometry. Network and classic Bluetooth printing have been verified on a
-QL-1110NWB. USB support is implemented but has not been tested on QL hardware.
+geometry. Network, classic Bluetooth, and USB printing have all been verified
+on a QL-1110NWB.
 
 ```sh
 # Network
@@ -140,12 +168,21 @@ mbprint print -l label.json -c inventory.csv \
 # USB
 mbprint print -l label.json -c inventory.csv \
   --model ql-1110nwb -t usb
+
+# Existing PDF, one page per label
+mbprint print-pdf labels.pdf --model ql-1110nwb -t usb
+
+# The same direct PDF flow on a Phomemo M110
+mbprint print-pdf labels.pdf --model m110 -t usb
 ```
 
 `--media` is optional. Bluetooth, serial, and USB use the printer's raster
 status block to identify the roll. TCP printing uses IPP on port 631 for status
 because port 9100 does not return it. If no status is available, media is
 inferred from the layout dimensions.
+
+For `print-pdf`, it is inferred from the PDF page dimensions. A page-size
+mismatch is rejected before printing unless `--fit` is supplied explicitly.
 
 | IDs | Roll type |
 |---|---|

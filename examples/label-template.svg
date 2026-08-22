@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A 30 x 20 mm label drawn as an SVG template. The viewBox spans 240 x 160 user
+  units, so one unit is one printer dot at 8 dots/mm. Render it with:
+
+    mbprint fields examples/label-template.svg, then mbprint preview with
+    a qr field, for example qr="https://shop.example/{{sku}}".
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="20mm" viewBox="0 0 240 160">
+  <title>Example product label</title>
+
+  <rect x="0" y="0" width="240" height="160" fill="white"/>
+
+  <!-- Anything vector survives untouched: this corner flourish is a path. -->
+  <path d="M4 4 h40 M4 4 v40" stroke="black" stroke-width="4" fill="none"/>
+
+  <text x="14" y="40" font-family="sans-serif" font-size="16">{{name|truncate:20}}</text>
+  <text x="14" y="80" font-family="sans-serif" font-size="30" font-weight="bold">
+    {{price_short}}€
+  </text>
+  <text x="14" y="132" font-family="sans-serif" font-size="12">{{ref}}[[ / {{batch}}]]</text>
+
+  <!-- Replaced by a generated QR code covering exactly this box. -->
+  <rect data-mb="qr" data-mb-data="{{qr}}" data-mb-error-correction="M"
+        x="140" y="34" width="92" height="92"/>
+</svg>

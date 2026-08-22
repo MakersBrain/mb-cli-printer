@@ -1,5 +1,15 @@
 name: CI
 
+# Three jobs, all cheap. `lint` is the fast static gate: ruff, the formatter,
+# and strict mypy, none of which need a matrix. `test` fans out across every
+# supported interpreter, and `build` proves the wheel installs and the console
+# script runs -- the one thing the test suite cannot check, because it imports
+# the package from the source tree.
+#
+# Tool versions are not written here. ruff and mypy are dev dependencies and
+# every step below resolves them through uv.lock, so CI and `make check` run
+# the same binaries by construction; bumping one is a lockfile change.
+
 on:
   push:
     branches: [main]
@@ -14,23 +24,33 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
 
+      # `--all-extras` is required, not merely thorough. Every optional extra is
+      # listed under `ignore_missing_imports` in pyproject.toml, so an extra
+      # that is absent resolves to `Any` and its call sites stop being checked.
+      # A mypy lane run without them would be green over code it never read.
       - name: Sync dependencies
         run: uv sync --all-extras --dev
 
-      - name: ruff check
-        run: uv run ruff check .
+      # `--output-format=github` so findings land as annotations on the diff
+      # rather than only in the log.
+      - name: Ruff
+        run: uv run ruff check --output-format=github .
 
-      - name: ruff format
-        run: uv run ruff format --check .
+      - name: Formatting and import order
+        run: |
+          uv run ruff format --check .
+          uv run ruff check --select I --output-format=github .
 
-      - name: mypy
+      # Strict, and blocking. Everything here is ordinary Python with typed
+      # dependencies, so there is no advisory lane to fall back on.
+      - name: Types
         run: uv run mypy
 
   test:
@@ -40,26 +60,29 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
 
       - name: Sync dependencies
         run: uv sync --all-extras --dev --python ${{ matrix.python-version }}
 
+      # `brother-ql` is a dev dependency and the raster tests diff our byte
+      # stream against it; they skip themselves when it is absent, so a sync
+      # failure would quietly reduce coverage rather than fail the lane.
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} pytest -q
 
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
 
@@ -72,7 +95,7 @@ jobs:
           VIRTUAL_ENV=/tmp/smoke uv pip install dist/*.whl
           /tmp/smoke/bin/mbprint --help
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/*

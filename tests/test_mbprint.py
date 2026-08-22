@@ -1,13 +1,20 @@
 """Unit tests: templating, record building, raster maths and protocol framing."""
 
 import asyncio
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
-from mbprint import data, layout, pdf, printers, protocol
+from mbprint import brother, data, layout, pdf, printers, protocol, svg, wireless
 from mbprint import raster as R
 from mbprint.transport.file import FileTransport
+from mbprint.transport.usb import (
+    decode_device_id,
+    decode_port_status,
+    select_usb_device,
+)
 
 CSV = """Name,Internal Reference,Sales Price,Quantity On Hand
 Alpha Gadget,AG-EX-0001,40.00,3
@@ -35,6 +42,193 @@ def test_optional_segment_drops_when_field_empty():
 
 def test_unknown_placeholder_is_left_visible():
     assert layout.substitute("{{nope}}", {}) == "{{nope}}"
+
+
+def test_missing_exact_font_fails_unless_fallback_is_explicit():
+    label = layout.Label(
+        width_mm=30,
+        height_mm=20,
+        elements=[
+            {
+                "type": "text",
+                "x": 0,
+                "y": 0,
+                "width": 200,
+                "height": 40,
+                "text": "hello",
+                "fontFamily": "Definitely Missing MBPrint Font",
+            }
+        ],
+    )
+    try:
+        layout.configure_fonts(allow_fallback=False)
+        with pytest.raises(SystemExit, match="--font-fallback"):
+            layout.render(label)
+
+        layout.configure_fonts(allow_fallback=True)
+        assert layout.render(label).size == (240, 160)
+    finally:
+        layout.configure_fonts()
+
+
+def test_font_bundle_resolves_an_exact_family_without_fontconfig(tmp_path, monkeypatch):
+    system_path = layout._fontconfig_path("sans-serif", False, False, exact=False)
+    assert system_path is not None
+    system_font = ImageFont.truetype(system_path, 12)
+    family, _style = system_font.getname()
+    bundle = tmp_path / "fonts"
+    bundle.mkdir()
+    bundled_font = bundle / "portable-font.ttf"
+    bundled_font.write_bytes(Path(system_path).read_bytes())
+    monkeypatch.setattr(layout, "_fontconfig_path", lambda *args, **kwargs: None)
+
+    try:
+        layout.configure_fonts(source=tmp_path / "label.json")
+        assert layout._font_path(str(family), False, False) == str(bundled_font)
+    finally:
+        layout.configure_fonts()
+
+
+def test_installed_font_addon_is_discovered(tmp_path, monkeypatch):
+    bundle = tmp_path / "addon-fonts"
+    bundle.mkdir()
+
+    class FakeEntryPoint:
+        name = "test-fonts"
+
+        @staticmethod
+        def load():
+            return lambda: bundle
+
+    class FakeEntryPoints:
+        @staticmethod
+        def select(**kwargs):
+            assert kwargs == {"group": "mbprint.font_bundles"}
+            return [FakeEntryPoint()]
+
+    with monkeypatch.context() as context:
+        context.setattr(layout.metadata, "entry_points", lambda: FakeEntryPoints())
+        layout._installed_font_bundle_dirs.cache_clear()
+        layout.configure_fonts()
+        assert bundle.resolve() in layout._FONT_SEARCH_DIRS
+
+    layout._installed_font_bundle_dirs.cache_clear()
+    layout.configure_fonts()
+
+
+def test_phomymo_css_font_stack_uses_exact_primary_family():
+    family, bold, italic, underline = layout._norm_text_style(
+        {
+            "fontFamily": '"Open Sans", sans-serif',
+            "fontWeight": "700",
+            "fontStyle": "italic",
+        }
+    )
+    assert (family, bold, italic, underline) == ("Open Sans", True, True, False)
+
+
+def test_variable_font_exposes_regular_and_bold_faces(tmp_path):
+    system_path = layout._fontconfig_path("Inter", False, False, exact=True)
+    if system_path is None:
+        pytest.skip("an installed variable font is required")
+    font = ImageFont.truetype(system_path, 12)
+    try:
+        names = font.get_variation_names()
+    except OSError:
+        pytest.skip("an installed variable font is required")
+    if b"Regular" not in names or b"Bold" not in names:
+        pytest.skip("an installed variable font with Regular and Bold instances is required")
+    bundle = tmp_path / "fonts"
+    bundle.mkdir()
+    bundled_font = bundle / "variable.ttf"
+    bundled_font.write_bytes(Path(system_path).read_bytes())
+
+    try:
+        layout.configure_fonts(font_dirs=[str(bundle)])
+        family = font.getname()[0]
+        assert layout._font_path(family, False, False) == str(bundled_font)
+        assert layout._font_path(family, True, False) == str(bundled_font)
+        assert layout._load_font(family, True, False, 12).getname()[1] == "Bold"
+    finally:
+        layout.configure_fonts()
+
+
+def test_optional_addons_cover_phomymo_and_nerd_font_families(monkeypatch):
+    # No fc-match, so every hit below has to come out of the bundle. A
+    # developer machine with these families installed would otherwise resolve
+    # them through the host and hide a bundle that cannot answer for itself.
+    monkeypatch.setattr(layout.shutil, "which", lambda name: None)
+    root = Path(__file__).resolve().parents[1]
+    phomymo = root / "packages/mbprint-fonts-phomymo/src/mbprint_fonts_phomymo/fonts"
+    nerd = root / "packages/mbprint-fonts-nerd/src/mbprint_fonts_nerd/fonts"
+    all_styles = ((False, False), (True, False), (False, True), (True, True))
+    families = (
+        "Inter",
+        "Roboto",
+        "Open Sans",
+        "Lato",
+        "Montserrat",
+        "Playfair Display",
+        "Merriweather",
+        "Roboto Mono",
+        "Source Code Pro",
+        "JetBrainsMono Nerd Font",
+    )
+
+    try:
+        layout.configure_fonts(font_dirs=[str(phomymo), str(nerd)])
+        for family in families:
+            missing = [
+                (bold, italic)
+                for bold, italic in all_styles
+                if not layout._font_path(family, bold, italic)
+            ]
+            assert not missing, f"{family} is missing bold/italic styles {missing}"
+        assert layout._font_path("Oswald", False, False)
+        assert layout._font_path("Oswald", True, False)
+        assert layout._font_path("Oswald", False, True) is None
+    finally:
+        layout.configure_fonts()
+
+
+def test_compatible_addon_substitutes_proprietary_fonts_only_with_fallback(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    compatible = root / "packages/mbprint-fonts-compatible/src/mbprint_fonts_compatible/fonts"
+    expected = {
+        "Arial": "Liberation Sans",
+        "Helvetica": "Liberation Sans",
+        "Georgia": "Gelasio",
+        "Times New Roman": "Liberation Serif",
+        "Courier New": "Liberation Mono",
+        "Impact": "Anton",
+        "Comic Sans MS": "Comic Neue",
+    }
+
+    with monkeypatch.context() as context:
+        context.setattr(layout, "_fontconfig_path", lambda *args, **kwargs: None)
+        layout.configure_fonts(font_dirs=[str(compatible)], allow_fallback=False)
+        with pytest.raises(SystemExit, match="--font-fallback"):
+            layout._load_font("Arial", False, False, 12)
+
+        layout.configure_fonts(font_dirs=[str(compatible)], allow_fallback=True)
+        for requested, replacement in expected.items():
+            assert layout._load_font(requested, False, False, 12).getname()[0] == replacement
+
+    layout.configure_fonts()
+
+
+def test_label_render_commands_accept_font_policy_options():
+    from mbprint import cli
+
+    for command in ("print", "pdf", "svg", "preview"):
+        args = cli.build_parser().parse_args(
+            [command, "--font-dir", "fonts-a", "--font-dir", "fonts-b", "--font-fallback"]
+        )
+        assert args.font_dir == ["fonts-a", "fonts-b"]
+        assert args.font_fallback is True
+
+        args = cli.build_parser().parse_args([command, "--no-font-fallback"])
+        assert args.font_fallback is False
 
 
 def test_price_short_drops_zero_cents():
@@ -268,11 +462,571 @@ def test_pdf_page_is_exactly_the_label_size(tmp_path):
     assert b"/MediaBox [ 0 0 85.03937007874016 56.69291338582678 ]" in blob
 
 
+def test_pdf_explicit_page_size_is_exact_at_native_printer_dpi(tmp_path):
+    out = pdf.write_labels(
+        [Image.new("RGB", (750, 400), "white"), Image.new("RGB", (750, 401), "black")],
+        tmp_path / "sized.pdf",
+        dots_per_mm=300 / 25.4,
+        page_size_mm=(63.5, 33.9),
+    )
+    pages = pdf.render_pages(out, dpi=72)
+    assert [(round(page.width_mm, 3), round(page.height_mm, 3)) for page in pages] == [
+        (63.5, 33.9),
+        (63.5, 33.9),
+    ]
+
+
 def test_pdf_sheet_tiles_labels(tmp_path):
     out = pdf.write_sheet(
         [Image.new("RGB", (240, 160), "white")] * 5, tmp_path / "s.pdf", dots_per_mm=8, page="a4"
     )
     assert out.exists() and out.stat().st_size > 0
+
+
+@pytest.mark.parametrize(
+    ("model", "dpi", "expected_size"),
+    [("m110", 203, (240, 160)), ("ql-1110nwb", 300, (354, 236))],
+)
+def test_pdf_selected_model_uses_exact_native_dpi(tmp_path, monkeypatch, model, dpi, expected_size):
+    from mbprint import cli
+
+    label_file = tmp_path / "label.json"
+    label_file.write_text(
+        '{"widthMm":30,"heightMm":20,"dotsPerMm":8,"elements":[]}', encoding="utf-8"
+    )
+    captured = {}
+
+    def write_labels(images, out_path, **kwargs):
+        captured["size"] = images[0].size
+        captured["dots_per_mm"] = kwargs["dots_per_mm"]
+        return out_path
+
+    monkeypatch.setattr(pdf, "write_labels", write_labels)
+    assert (
+        cli.main(["pdf", "--label", str(label_file), "--model", model, "--out", "labels.pdf"]) == 0
+    )
+    assert captured["size"] == expected_size
+    assert captured["dots_per_mm"] * pdf.MM_PER_INCH == pytest.approx(dpi)
+
+
+def test_pdf_explicit_scale_overrides_selected_model(tmp_path, monkeypatch):
+    from mbprint import cli
+
+    label_file = tmp_path / "label.json"
+    label_file.write_text(
+        '{"widthMm":30,"heightMm":20,"dotsPerMm":8,"elements":[]}', encoding="utf-8"
+    )
+    captured = {}
+
+    def write_labels(images, out_path, **kwargs):
+        captured["size"] = images[0].size
+        return out_path
+
+    monkeypatch.setattr(pdf, "write_labels", write_labels)
+    assert (
+        cli.main(
+            [
+                "pdf",
+                "--label",
+                str(label_file),
+                "--model",
+                "ql-1110nwb",
+                "--scale",
+                "2",
+            ]
+        )
+        == 0
+    )
+    assert captured["size"] == (480, 320)
+
+
+def test_svg_export_preserves_size_vector_elements_and_templates(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    label = layout.Label(
+        width_mm=30,
+        height_mm=20,
+        dots_per_mm=8,
+        name="SVG label",
+        elements=[
+            {
+                "type": "text",
+                "x": 4,
+                "y": 4,
+                "width": 100,
+                "height": 24,
+                "text": "{{name}} & Co",
+                "fontSize": 14,
+                "align": "left",
+            },
+            {
+                "type": "shape",
+                "shapeType": "rectangle",
+                "x": 10,
+                "y": 40,
+                "width": 60,
+                "height": 30,
+                "fill": "none",
+                "stroke": "black",
+                "rotation": 15,
+            },
+            {"type": "qr", "x": 120, "y": 20, "width": 80, "height": 80, "qrData": "{{qr}}"},
+        ],
+    )
+    content = svg.render(label, {"name": "Maker", "qr": "https://example.test"})
+    root = ET.fromstring(content)
+    namespace = {"s": svg.SVG_NS}
+    assert root.attrib["width"] == "30mm"
+    assert root.attrib["height"] == "20mm"
+    assert root.attrib["viewBox"] == "0 0 240 160"
+    assert "Maker &amp; Co" in content
+    assert root.find(".//s:text", namespace) is not None
+    assert root.find(".//s:path", namespace) is not None  # vector QR modules
+    assert "rotate(15 40 55)" in content
+
+
+def test_svg_cli_writes_one_file_per_record(tmp_path):
+    from mbprint import cli
+
+    label_file = tmp_path / "label.json"
+    label_file.write_text(
+        '{"widthMm":30,"heightMm":20,"elements":['
+        '{"type":"text","x":0,"y":0,"width":100,"height":20,"text":"{{name}}"}]}',
+        encoding="utf-8",
+    )
+    csv_file = tmp_path / "records.csv"
+    csv_file.write_text("Name\nAlpha\nBeta\n", encoding="utf-8")
+    out = tmp_path / "vectors"
+    assert cli.main(["svg", "-l", str(label_file), "-c", str(csv_file), "-o", str(out)]) == 0
+    files = sorted(out.glob("*.svg"))
+    assert [path.name for path in files] == ["001-label1.svg", "002-label2.svg"]
+    assert "Alpha" in files[0].read_text(encoding="utf-8")
+
+
+def test_svg_embeds_image_elements_as_self_contained_png():
+    import base64
+    import io
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (2, 2), "black").save(buffer, "PNG")
+    uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    label = layout.Label(
+        width_mm=10,
+        height_mm=10,
+        elements=[{"type": "image", "x": 0, "y": 0, "width": 40, "height": 40, "imageData": uri}],
+    )
+    content = svg.render(label)
+    assert "data:image/png;base64," in content
+    assert "xlink:href=" in content
+
+
+# --- SVG templates as layouts ----------------------------------------------
+
+SVG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="20mm" viewBox="0 0 240 160">
+  <title>Template label</title>
+  <text x="8" y="30" font-size="18">{{name}}</text>
+  <text x="8" y="120" font-size="12">{{ref}}[[ / {{batch}}]]</text>
+  <rect data-mb="qr" data-mb-data="{{qr}}" x="140" y="40" width="90" height="90"/>
+</svg>
+"""
+
+
+def _svg_label(tmp_path, source=SVG_TEMPLATE, name="label.svg"):
+    path = tmp_path / name
+    path.write_text(source, encoding="utf-8")
+    return layout.Label.load(path)
+
+
+def test_svg_label_reads_its_physical_size_title_and_placeholders(tmp_path):
+    label = _svg_label(tmp_path)
+    assert (label.width_mm, label.height_mm, label.dots_per_mm) == (30, 20, 8)
+    assert (label.width_px, label.height_px) == (240, 160)
+    assert label.name == "Template label"
+    assert label.svg_source is not None
+    assert label.placeholders() == ["name", "ref", "batch", "qr"]
+    # `batch` sits in an optional segment, so it is never a missing field.
+    assert label.missing_for({"name": "A", "ref": "R", "qr": "Q"}) == []
+    assert label.missing_for({"name": "A"}) == ["ref", "qr"]
+
+
+def test_svg_label_sizes_itself_from_a_viewbox_alone(tmp_path):
+    label = _svg_label(
+        tmp_path,
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 48"><text>{{a}}</text></svg>',
+    )
+    assert (round(label.width_mm, 2), round(label.height_mm, 2)) == (25.4, 12.7)
+    assert (label.width_px, label.height_px) == (96, 48)
+
+
+def test_svg_label_without_a_size_is_rejected(tmp_path):
+    with pytest.raises(SystemExit, match="needs a physical size"):
+        _svg_label(tmp_path, '<svg xmlns="http://www.w3.org/2000/svg"><text>{{a}}</text></svg>')
+
+
+def test_svg_template_substitution_escapes_values_and_builds_the_qr(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    from mbprint import svgtemplate
+
+    label = _svg_label(tmp_path)
+    filled = svgtemplate.substitute(
+        label.svg_source,
+        {"name": "Ben & Co <Ltd>", "ref": "AG-0001", "batch": "", "qr": "https://x.test/a&b"},
+    )
+    assert "Ben &amp; Co &lt;Ltd&gt;" in filled
+    assert ">AG-0001<" in filled  # the empty optional segment disappeared
+    assert "{{" not in filled and "data-mb" not in filled
+    root = ET.fromstring(filled)
+    assert root.find(f".//{{{svg.SVG_NS}}}path") is not None  # vector QR modules
+
+
+def test_svg_template_marker_needs_a_box(tmp_path):
+    from mbprint import svgtemplate
+
+    label = _svg_label(
+        tmp_path,
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 80 80">'
+        '<rect data-mb="qr" data-mb-data="{{qr}}"/></svg>',
+    )
+    with pytest.raises(SystemExit, match="needs x, y, width and height"):
+        svgtemplate.substitute(label.svg_source, {"qr": "Q"})
+
+
+def test_svg_template_renders_through_the_rasterizer_at_the_asked_scale(tmp_path, monkeypatch):
+    import io as _io
+
+    from mbprint import svgtemplate
+
+    captured = {}
+
+    def fake_backend(name, source, width, height, base):
+        captured.update(name=name, source=source, size=(width, height), base=base)
+        buffer = _io.BytesIO()
+        Image.new("RGB", (width, height), "white").save(buffer, "PNG")
+        return buffer.getvalue()
+
+    monkeypatch.setattr(svgtemplate, "_run_backend", fake_backend)
+    label = _svg_label(tmp_path)
+    image = layout.render(label, {"name": "A", "ref": "R", "qr": "Q"}, scale=2)
+    assert image.size == (480, 320)
+    assert captured["size"] == (480, 320)
+    assert captured["base"] == tmp_path
+    assert ">A<" in captured["source"]
+
+
+def test_svg_template_render_explains_a_missing_rasterizer(tmp_path, monkeypatch):
+    from mbprint import svgtemplate
+
+    monkeypatch.setattr(svgtemplate, "_cairosvg", lambda *a, **k: None)
+    monkeypatch.setattr(svgtemplate.shutil, "which", lambda name: None)
+    label = _svg_label(tmp_path)
+    with pytest.raises(SystemExit, match="needs an SVG renderer"):
+        layout.render(label, {"name": "A", "ref": "R", "qr": "Q"})
+
+
+def test_svg_template_barcode_marker_becomes_embedded_artwork(tmp_path):
+    pytest.importorskip("barcode")
+    from mbprint import svgtemplate
+
+    label = _svg_label(
+        tmp_path,
+        '<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="20mm" '
+        'viewBox="0 0 320 160"><rect data-mb="barcode" data-mb-data="{{sku}}" '
+        'data-mb-symbology="code128" x="20" y="60" width="280" height="80"/></svg>',
+    )
+    filled = svgtemplate.substitute(label.svg_source, {"sku": "AG-EX-0001"})
+    assert "data:image/png;base64," in filled
+    assert "data-mb" not in filled
+    # An empty value drops the element instead of drawing an empty box.
+    assert "image" not in svgtemplate.substitute(label.svg_source, {"sku": ""})
+
+
+def test_svg_label_prints_through_the_cli(tmp_path, monkeypatch):
+    import io as _io
+
+    from mbprint import cli, svgtemplate
+
+    def fake_backend(name, source, width, height, base):
+        buffer = _io.BytesIO()
+        Image.new("RGB", (width, height), "white").save(buffer, "PNG")
+        return buffer.getvalue()
+
+    monkeypatch.setattr(svgtemplate, "_run_backend", fake_backend)
+    label_file = tmp_path / "label.svg"
+    label_file.write_text(SVG_TEMPLATE, encoding="utf-8")
+    csv_file = tmp_path / "records.csv"
+    csv_file.write_text("Name,Internal Reference\nAlpha,AG-1\n", encoding="utf-8")
+    out = tmp_path / "preview"
+    assert (
+        cli.main(
+            [
+                "preview",
+                "-l",
+                str(label_file),
+                "-c",
+                str(csv_file),
+                "--data",
+                "qr=Q",
+                "-o",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert [path.name for path in out.glob("*.png")] == ["001-AG-1.png"]
+
+
+def test_svg_export_of_an_svg_label_fills_the_original_document(tmp_path):
+    label = _svg_label(tmp_path)
+    content = svg.render(label, {"name": "Alpha", "ref": "R1", "batch": "L7", "qr": "Q"})
+    assert 'width="30mm"' in content
+    assert ">Alpha<" in content
+    assert "R1 / L7" in content
+
+
+def test_pdf_page_selection_and_native_dpi_rendering(tmp_path):
+    source = pdf.write_labels(
+        [Image.new("RGB", (300, 200), "white"), Image.new("RGB", (300, 200), "black")],
+        tmp_path / "labels.pdf",
+        dots_per_mm=10,
+    )
+    pages = pdf.render_pages(source, dpi=300, pages="2")
+    assert [(page.number, round(page.width_mm), round(page.height_mm)) for page in pages] == [
+        (2, 30, 20)
+    ]
+    assert pages[0].image.size == (355, 237)
+    assert pages[0].image.getextrema() == ((0, 0), (0, 0), (0, 0))
+
+
+def test_pdf_page_range_parser_validates_and_deduplicates():
+    assert pdf.page_indices("1,3-5,3", 5) == [0, 2, 3, 4]
+    with pytest.raises(SystemExit, match="outside the available range"):
+        pdf.page_indices("6", 5)
+    with pytest.raises(SystemExit, match="invalid page selection"):
+        pdf.page_indices("3-1", 5)
+
+
+def test_la_poste_formats_match_the_service_options():
+    expected = {
+        "L24A": (3, 8),
+        "L24B": (3, 8),
+        "L21A": (3, 7),
+        "L18A": (3, 6),
+        "L16A": (2, 8),
+        "L14A": (2, 7),
+        "L12A": (2, 6),
+    }
+    assert {
+        code: (item.columns, item.rows)
+        for code, item in pdf.LA_POSTE_FORMATS.items()
+        if code in expected
+    } == expected
+    assert pdf.LA_POSTE_FORMATS["SHEET"] is pdf.LA_POSTE_FORMATS["L24A"]
+    assert pdf.LA_POSTE_FORMATS["L24A_SHEET"] is pdf.LA_POSTE_FORMATS["L24A"]
+
+
+def test_la_poste_sheet_extraction_keeps_only_occupied_slots():
+    item = pdf.LA_POSTE_FORMATS["L14A"]
+    image = Image.new("RGB", (2100, 2970), "white")
+    draw = ImageDraw.Draw(image)
+    for slot in (1, 14):
+        index = slot - 1
+        column, row = index % item.columns, index // item.columns
+        x = round((item.left_mm + column * item.column_pitch_mm) * 10)
+        y = round((item.top_mm + row * item.row_pitch_mm) * 10)
+        draw.rectangle((x + 20, y + 20, x + 200, y + 120), fill="black")
+    source = pdf.RenderedPage(3, 210, 297, image)
+
+    labels = pdf.extract_la_poste_labels([source], "l14a")
+
+    assert [(label.number, label.slot) for label in labels] == [(3, 1), (3, 14)]
+    assert all((label.width_mm, label.height_mm) == (63.5, 33.9) for label in labels)
+    assert all(label.image.size == (635, 339) for label in labels)
+
+
+def test_la_poste_sheet_extraction_requires_a4_and_ink():
+    with pytest.raises(SystemExit, match="needs a 210x297mm sheet"):
+        pdf.extract_la_poste_labels(
+            [pdf.RenderedPage(2, 100, 150, Image.new("RGB", (1000, 1500), "white"))], "L24A"
+        )
+    with pytest.raises(SystemExit, match="no stamps found"):
+        pdf.extract_la_poste_labels(
+            [pdf.RenderedPage(1, 210, 297, Image.new("RGB", (2100, 2970), "white"))],
+            "SHEET",
+        )
+
+
+def test_pdf_fit_shrinks_to_a_non_brother_head():
+    from mbprint import media
+
+    printer = printers.by_id("m110")
+    fitted = media.fit_to_head(Image.new("RGB", (800, 400), "white"), printer.width_px)
+    assert fitted.size == (printer.width_px, printer.width_px // 2)
+    assert media.fit_to_head(Image.new("RGB", (200, 100), "white"), printer.width_px).size == (
+        200,
+        100,
+    )
+
+
+def test_print_pdf_dry_run_uses_existing_brother_pipeline(tmp_path):
+    from mbprint import cli
+
+    source = pdf.write_labels(
+        [Image.new("RGB", (620, 290), "white")],
+        tmp_path / "label.pdf",
+        dots_per_mm=10,
+    )
+    capture = tmp_path / "job.bin"
+    result = cli.main(
+        [
+            "print-pdf",
+            str(source),
+            "--model",
+            "ql-1110nwb",
+            "--media",
+            "62x29",
+            "--dry-run",
+            "--out",
+            str(capture),
+            "--chunk-delay",
+            "0",
+            "--plain",
+        ]
+    )
+    assert result == 0
+    stream = capture.read_bytes()
+    assert stream.startswith(b"\x1bia")  # Brother raster mode
+    assert b"\x1biz" in stream  # Brother print-information command
+
+
+def test_print_pdf_dry_run_uses_existing_phomemo_pipeline(tmp_path):
+    from mbprint import cli
+
+    source = pdf.write_labels(
+        [Image.new("RGB", (400, 300), "white")],
+        tmp_path / "phomemo-label.pdf",
+        dots_per_mm=10,
+    )
+    capture = tmp_path / "phomemo-job.bin"
+    result = cli.main(
+        [
+            "print-pdf",
+            str(source),
+            "--model",
+            "m110",
+            "--dry-run",
+            "--out",
+            str(capture),
+            "--chunk-delay",
+            "0",
+            "--plain",
+        ]
+    )
+    assert result == 0
+    stream = capture.read_bytes()
+    assert stream.startswith(protocol.M110_SPEED(5))
+    assert b"\x1dv0\x00" in stream  # GS v 0 raster command
+
+
+def test_print_pdf_parser_accepts_pages_and_copies():
+    from mbprint import cli
+
+    args = cli.build_parser().parse_args(
+        ["print-pdf", "labels.pdf", "--pages", "2-4", "--copies", "3"]
+    )
+    assert args.pdf_file == "labels.pdf"
+    assert args.pages == "2-4"
+    assert args.copies == 3
+
+    args = cli.build_parser().parse_args(
+        ["print-pdf", "timbres.pdf", "--laposte-format", "l24a_sheet"]
+    )
+    assert args.laposte_format == "L24A_SHEET"
+
+
+def test_extract_pdf_writes_one_exact_size_page_per_stamp(tmp_path, monkeypatch, capsys):
+    from mbprint import cli
+
+    source_page = pdf.RenderedPage(1, 210, 297, Image.new("RGB", (2100, 2970), "white"))
+    labels = [
+        pdf.RenderedPage(1, 63.5, 33.9, Image.new("RGB", (750, 400), "white"), slot=2),
+        pdf.RenderedPage(1, 63.5, 33.9, Image.new("RGB", (750, 400), "black"), slot=3),
+    ]
+    captured = {}
+
+    def render_pages(path, dpi, pages):
+        captured["render_dpi"] = dpi
+        return [source_page]
+
+    monkeypatch.setattr(pdf, "render_pages", render_pages)
+    monkeypatch.setattr(pdf, "extract_la_poste_labels", lambda pages, code: labels)
+
+    def write_labels(images, out_path, **kwargs):
+        captured.update(images=images, out_path=out_path, kwargs=kwargs)
+        return tmp_path / "split.pdf"
+
+    monkeypatch.setattr(pdf, "write_labels", write_labels)
+    result = cli.main(
+        [
+            "extract-pdf",
+            "Timbres.pdf",
+            "--laposte-format",
+            "l24a",
+            "--dpi",
+            "300",
+            "--device",
+            "M110-1234",
+            "-o",
+            str(tmp_path / "labels.pdf"),
+        ]
+    )
+
+    assert result == 0
+    assert captured["images"] == [label.image for label in labels]
+    assert captured["out_path"] == str(tmp_path / "labels.pdf")
+    assert captured["render_dpi"] == 300
+    assert captured["kwargs"]["dots_per_mm"] == pytest.approx(300 / 25.4)
+    assert captured["kwargs"]["page_size_mm"] == (63.5, 33.9)
+    assert "2 labels, 63.5x33.9mm" in capsys.readouterr().out
+
+    assert (
+        cli.main(
+            [
+                "extract-pdf",
+                "Timbres.pdf",
+                "--laposte-format",
+                "L24A",
+                "--device",
+                "M110-1234",
+            ]
+        )
+        == 0
+    )
+    assert captured["render_dpi"] == 203
+    assert captured["kwargs"]["dots_per_mm"] == pytest.approx(203 / 25.4)
+
+    args = cli.build_parser().parse_args(
+        ["extract-pdf", "Timbres.pdf", "--laposte-format", "SHEET"]
+    )
+    assert args.dpi is None
+    assert args.out == "labels.pdf"
+
+
+def test_print_pdf_validates_brother_media_and_rotates_transposed_page():
+    from mbprint import cli
+    from mbprint import media as M
+
+    printer = printers.by_id("ql-1110nwb")
+    media = M.by_id("62x29")
+    assert media is not None
+    transposed = pdf.RenderedPage(1, 29, 62, Image.new("RGB", (290, 620), "white"))
+    fitted = cli._pdf_page_on_media(transposed, media, printer, allow_fit=False)
+    assert fitted.size == media.dots_printable
+
+    wrong = pdf.RenderedPage(1, 40, 30, Image.new("RGB", (400, 300), "white"))
+    with pytest.raises(SystemExit, match="correctly sized PDF or pass --fit"):
+        cli._pdf_page_on_media(wrong, media, printer, allow_fit=False)
 
 
 # --- logging and tracing ---------------------------------------------------
@@ -339,7 +1093,7 @@ def test_unknown_device_name_is_warned_about(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="mbprint.printers"):
-        assert printers.resolve(None, "M110-0123456789").id == "generic"
+        assert printers.resolve(None, "UnknownPrinter-0123456789").id == "generic"
     warnings = " ".join(r.getMessage() for r in caplog.records)
     assert "matches no known model" in warnings
     assert "--model" in warnings
@@ -520,10 +1274,12 @@ def test_config_data_table_keeps_definition_order(tmp_path, monkeypatch):
     cfgmod.set_key(stored, "data.brand", "Ceramics")
     cfgmod.set_key(stored, "data.qr", "https://x/{{brand}}")
     cfgmod.set_key(stored, "density", "7")
+    cfgmod.set_key(stored, "font_fallback", "true")
     cfgmod.save(stored)
 
     loaded = cfgmod.load()
     assert loaded["density"] == 7
+    assert loaded["font_fallback"] is True
     assert cfgmod.data_templates(loaded) == [
         ("brand", "Ceramics"),
         ("qr", "https://x/{{brand}}"),
@@ -531,6 +1287,28 @@ def test_config_data_table_keeps_definition_order(tmp_path, monkeypatch):
     assert cfgmod.flatten(loaded)["data.qr"] == "https://x/{{brand}}"
     cfgmod.unset_key(loaded, "data.brand")
     assert cfgmod.data_templates(loaded) == [("qr", "https://x/{{brand}}")]
+
+
+def test_font_fallback_defaults_true_and_can_be_overridden(monkeypatch):
+    from mbprint import cli
+
+    label = layout.Label(width_mm=30, height_mm=20)
+    seen: list[bool] = []
+    settings: dict[str, bool] = {}
+    monkeypatch.setattr(cli.cfg, "load", lambda: settings)
+    monkeypatch.setattr(
+        layout,
+        "configure_fonts",
+        lambda **kwargs: seen.append(bool(kwargs["allow_fallback"])),
+    )
+
+    cli._configure_label_fonts(SimpleNamespace(font_fallback=None, font_dir=None), label)
+    settings["font_fallback"] = False
+    cli._configure_label_fonts(SimpleNamespace(font_fallback=None, font_dir=None), label)
+    cli._configure_label_fonts(SimpleNamespace(font_fallback=True, font_dir=None), label)
+    settings["font_fallback"] = True
+    cli._configure_label_fonts(SimpleNamespace(font_fallback=False, font_dir=None), label)
+    assert seen == [True, False, True, False]
 
 
 def test_unknown_config_key_mentions_the_data_table():
@@ -859,3 +1637,134 @@ def test_brother_status_rejects_a_foreign_reply():
         protocol.brother_parse_status(bytes(32))  # no 80 20 42 header
     with pytest.raises(SystemExit):
         protocol.brother_parse_status(bytes([0x80, 0x20, 0x42]))  # too short
+
+
+def test_brother_wireless_command_matches_reversed_native_format():
+    command = wireless.WirelessSettings(ssid="Maker WiFi", password="secret").command()
+    assert command.startswith(wireless.PJL_HEADER)
+    assert b'DEFAULT OBJBRNET="458877:-4d-61-6b-65-72-20-57-69-46-69"' in command
+    assert b'DEFAULT OBJBRNET="458880:8"' in command
+    assert b'DEFAULT OBJBRNET="458881:3"' in command
+    assert b'DEFAULT OBJBRNET="459138.2:1"' in command
+    encrypted = wireless.xor_password(b"secret")
+    assert b'DEFAULT OBJBRNET="99458890:' + encrypted + b'"' in command
+    assert command.endswith(wireless.PJL_FOOTER + wireless.REBOOT_COMMAND)
+
+
+def test_brother_open_wireless_command_omits_password():
+    command = wireless.WirelessSettings(
+        ssid="Guest", password="", encryption="none", authentication="open"
+    ).command()
+    assert b"99458890" not in command
+    assert b"99458889.1" not in command
+    assert b'DEFAULT OBJBRNET="458880:1"' in command
+    assert b'DEFAULT OBJBRNET="458881:1"' in command
+
+
+def test_brother_wireless_password_xor_is_reversible():
+    assert wireless.xor_password(wireless.xor_password(b"correct horse")) == b"correct horse"
+
+
+def test_brother_wireless_read_commands_match_native_pjl():
+    assert wireless.wifi_scan_start_command() == (
+        wireless.PJL_HEADER + b'@PJL DEFAULT OBJBRNET="458845:31-3a"\r\n' + wireless.PJL_FOOTER
+    )
+    assert wireless.wifi_scan_result_command() == (
+        wireless.PJL_HEADER + b"@PJL INFO AVAILABLEWLAN\r\n" + wireless.PJL_FOOTER
+    )
+    assert wireless.wifi_status_command() == (
+        wireless.PJL_HEADER
+        + b'@PJL DEFAULT OBJBRNET="458867"\r\n'
+        + b"@PJL INQUIRE OBJBRNET\r\n"
+        + wireless.PJL_FOOTER
+    )
+    assert wireless.ip_address_command() == (
+        wireless.PJL_HEADER
+        + b'@PJL DEFAULT OBJBRNET="458967.2"\r\n'
+        + b"@PJL INQUIRE OBJBRNET\r\n"
+        + wireless.PJL_FOOTER
+    )
+
+
+def test_brother_wireless_response_decoders():
+    reply = b'@PJL INFO OBJBRNET\r\n"458867:1"\r\n"458967.2:c0-a8-01-32"\r\n'
+    assert wireless.parse_wifi_status(reply) is True
+    assert wireless.parse_ip_address(reply) == "192.168.1.50"
+    assert wireless.parse_wifi_status(b'"458867:0"') is False
+    assert wireless.parse_ip_address(b'"458967.2:ffff-00-00-01"') is None
+    assert (
+        wireless.parse_oid_value(b'"458877:-4d-61-6b-65-72-20-57-69-46-69"', "458877")
+        == "Maker WiFi"
+    )
+    assert wireless.parse_oid_value(b'"458877:4D-61-6B-65-72"', "458877") == "Maker"
+    assert wireless.parse_oid_value(b'"458880:8"\r\n', "458880") == "8"
+    assert wireless.parse_oid_value(b'"458881:3"\r\n', "missing") is None
+
+
+def test_brother_wireless_inquire_rejects_non_numeric_oids():
+    with pytest.raises(ValueError, match="invalid OBJBRNET OID"):
+        wireless.inquire_command('458867"\r\n@PJL RESET')
+
+
+def test_brother_access_point_decoder_ignores_unknown_rows():
+    reply = b"header\r\nVAP,-4d-61-6b-65-72,ignored,ignored,11,87,0,2\r\nbad,row\r\n"
+    assert wireless.parse_access_points(reply) == [
+        wireless.AccessPoint("Maker", channel=11, power=87, enterprise=False, encrypted=True)
+    ]
+
+
+def test_usb_printer_class_response_decoders():
+    identifier = b"MFG:Brother;MDL:QL-1110NWB;"
+    assert (
+        decode_device_id((len(identifier) + 2).to_bytes(2, "big") + identifier)
+        == identifier.decode()
+    )
+    assert decode_device_id(b"\x00") is None
+    assert decode_port_status(0x18) == {"selected": True, "paper_empty": False, "error": False}
+
+
+def test_brother_system_report_command_and_decoder():
+    response = (
+        b"\x00\x12<<PRINTER CONFIGURATION>>\r\n"
+        b"[Printer]\r\nPrinter =QL-1110NWB\r\nProgVer =V2.13\r\n"
+        b"[WLAN]\r\nIP Address =192.0.2.7\r\nGateway Address =192.0.2.1\r\n"
+    )
+    assert bytes.fromhex("1b 69 58 47") == brother.SYSTEM_REPORT_COMMAND
+    assert brother.decode_system_report(response).startswith("<<PRINTER CONFIGURATION>>")
+    assert brother.parse_system_report(response) == {
+        "Printer": {"Printer": "QL-1110NWB", "ProgVer": "V2.13"},
+        "WLAN": {"IP Address": "192.0.2.7", "Gateway Address": "192.0.2.1"},
+    }
+
+
+def test_brother_system_report_rejects_unrelated_response():
+    with pytest.raises(ValueError, match="not a Brother"):
+        brother.parse_system_report(b"ordinary printer reply")
+
+
+def test_usb_report_parser_defaults_to_usb_and_supports_json():
+    args = (
+        __import__("mbprint.cli", fromlist=["build_parser"])
+        .build_parser()
+        .parse_args(["usb-report", "--json", "--usb-serial", "QL-A", "--out", "report.json"])
+    )
+    assert args.transport == "usb"
+    assert args.json is True
+    assert args.usb_serial == "QL-A"
+    assert args.out == "report.json"
+
+
+def test_usb_selector_requires_one_unambiguous_device():
+    first = SimpleNamespace(idVendor=0x04F9, idProduct=0x209B, bus=1, address=7)
+    second = SimpleNamespace(idVendor=0x04F9, idProduct=0x209B, bus=1, address=9)
+    serials = {id(first): "QL-A", id(second): "QL-B"}
+
+    def read_serial(dev):
+        return serials[id(dev)]
+
+    assert select_usb_device([first, second], serial="QL-B", serial_reader=read_serial) is second
+    assert select_usb_device([first, second], bus=1, address=7) is first
+    with pytest.raises(SystemExit, match="multiple USB printers match"):
+        select_usb_device([first, second])
+    with pytest.raises(SystemExit, match="serial 'missing'"):
+        select_usb_device([first, second], serial="missing", serial_reader=read_serial)

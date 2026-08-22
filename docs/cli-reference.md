@@ -21,7 +21,7 @@ uses ordinary log lines instead.
 
 ## Source options
 
-Layout and data options are accepted by `print`, `pdf`, `preview`, and
+Layout and data options are accepted by `print`, `pdf`, `svg`, `preview`, and
 `fields`.
 
 | Option | Meaning |
@@ -44,15 +44,28 @@ than applying filter, limit, or copy selection.
 
 ## Render options
 
-`print`, `pdf`, and `preview` accept:
+`print`, `print-pdf`, `pdf`, and `preview` accept:
 
 | Option | Meaning |
 |---|---|
 | `--dither MODE` | `auto`, `none`, `threshold`, `floyd-steinberg`, `atkinson`, or `ordered` |
 
+`print`, `pdf`, `svg`, and `preview` additionally accept:
+
+| Option | Meaning |
+|---|---|
+| `--font-dir PATH` | search a bundled font directory; repeatable |
+| `--font-fallback`, `--no-font-fallback` | allow substitution (default), or require exact fonts |
+
+Missing `label.json` font families use compatible or generic substitutions by
+default and emit warnings. `--no-font-fallback` makes missing families or
+styles errors. A `fonts/` directory beside the label is discovered
+automatically.
+
 ## Printer and media options
 
-These are accepted by `print`, `status`, and `test` unless noted otherwise.
+These are accepted by `print`, `print-pdf`, `status`, and `test` unless noted
+otherwise.
 
 | Option | Meaning |
 |---|---|
@@ -73,7 +86,7 @@ offset options.
 
 ## Transport options
 
-These are accepted by `print`, `status`, and `test`.
+These are accepted by `print`, `print-pdf`, `status`, and `test`.
 
 | Option | Meaning |
 |---|---|
@@ -82,25 +95,68 @@ These are accepted by `print`, `status`, and `test`.
 | `--host HOST`, `--tcp-port N` | network printer; port defaults to 9100 |
 | `--rfcomm-channel N` | classic Bluetooth channel; default 1 |
 | `--port PATH`, `--baud N` | serial or RFCOMM device; baud defaults to 115200 |
-| `--usb-vid ID`, `--usb-pid ID` | USB device selection |
+| `--usb-vid ID`, `--usb-pid ID` | USB vendor/product selection |
+| `--usb-serial SERIAL` | select one USB printer by stable serial number |
+| `--usb-bus N`, `--usb-address N` | select one USB connection by its current location |
+| `--usb-interface N`, `--usb-alt N` | select a USB interface and alternate setting |
 | `--mtu N` | cap the transport payload size |
 | `--chunk-delay MS` | override inter-chunk pacing |
 | `-o`, `--out PATH` | capture bytes for the file transport |
 
-`print` additionally accepts `--dry-run`; with `--out`, it captures the bytes
-that would have been sent.
+`print` and `print-pdf` additionally accept `--dry-run`; with `--out`, they
+capture the bytes that would have been sent.
+
+## Direct PDF printing
+
+```text
+mbprint print-pdf PDF [--pages 1,3-5] [--copies N] [--fit]
+                  [--laposte-format FORMAT] [printer options]
+```
+
+Each selected PDF page is one label. Pages are rasterized at the selected
+printer's native DPI and sent through the same protocol and transport as
+`print`, including Brother QL and Phomemo models. All selected pages must have
+the same physical size. On Brother QL printers the page must match the loaded
+or selected DK media; a transposed page
+is rotated automatically. `--fit` explicitly permits scaling a mismatched page.
+`--dry-run --out job.bin` captures the resulting printer byte stream.
+
+La Poste's Mon Timbre en Ligne downloads are A4 sheets rather than one-label
+pages. `--laposte-format` extracts occupied stamps and prints them individually.
+It accepts `SHEET`/`L24A_SHEET` for *Feuille blanche A4*, plus the adhesive-sheet
+codes `L24A`, `L24B`, `L21A`, `L18A`, `L16A`, `L14A`, and `L12A`. Use the code
+selected on La Poste's **Options d'impression** page.
+
+## Extract La Poste labels to PDF
+
+```text
+mbprint extract-pdf PDF --laposte-format FORMAT [-o labels.pdf]
+                    [--pages 1,3-5] [--dpi N | --model ID | --device NAME]
+```
+
+This performs the same occupied-slot extraction without printing. The output
+contains one 63.5 x 33.9 mm stamp per PDF page. `--pages` selects source A4
+pages. `--model` or `--device` uses that printer's native DPI; an explicit
+`--dpi` takes precedence. The default is 254 DPI. Page dimensions remain exact
+at every resolution.
 
 ## PDF options
 
 | Option | Meaning |
 |---|---|
 | `-o`, `--out PATH` | output path; default `labels.pdf` |
+| `-m`, `--model ID`, `--device NAME` | render at the selected model's native DPI |
 | `--sheet a4\|a5\|letter\|legal` | tile onto a paper sheet |
 | `--margin MM`, `--gap MM` | sheet margin and spacing |
 | `--columns N`, `--rows N` | force a grid |
 | `--no-marks` | omit cut marks |
 | `--bilevel` | apply print halftoning |
-| `--scale N` | render scale; 1 is the layout's 203 dpi baseline |
+| `--scale N` | explicit render scale, overriding automatic model DPI |
+
+Without `--model` or `--device`, the layout's `dotsPerMm` controls PDF artwork
+resolution. Selecting a model uses its exact native DPI and does not change the
+physical PDF page size. See [PDF generation and direct printing](pdf-workflows.md)
+for the complete workflow and media-safety behavior.
 
 ## Preview options
 
@@ -112,21 +168,52 @@ that would have been sent.
 | `--printer-scale` | render at the selected model's DPI |
 | `--zoom N` | enlarge the PNG |
 
+## SVG options
+
+```text
+mbprint svg [source options] [--out PATH_OR_DIRECTORY]
+```
+
+One exact-size SVG is written per expanded record. A single record may target a
+specific `.svg` path; batches use an output directory. Text, shapes, QR codes,
+rotation, and clipping remain vectors. Images and barcodes are embedded PNG
+data. See [SVG export and import](svg-export.md) for fidelity, round-trip
+behavior, third-party SVG mapping, and naming details.
+
+An SVG file is also accepted as a layout: `-l label.svg` fills the document's
+`{{placeholders}}` per record and rasterizes it for `print`, `pdf`, and
+`preview`, which needs an SVG renderer (cairosvg, resvg, rsvg-convert, or
+inkscape). See [SVG labels as templates](svg-templates.md).
+
 ## Other commands
 
 ```text
 mbprint printers [--json]
 mbprint scan [--timeout SECONDS]
+mbprint import-svg SVG [-o label.json]
 mbprint config list
 mbprint config get KEY
 mbprint config set KEY VALUE
 mbprint config unset KEY
+mbprint wifi scan [--scan-wait SECONDS] [--raw] [transport options]
+mbprint wifi status [--raw] [transport options]
+mbprint wifi [configure] --ssid NAME [--password-stdin] [transport options]
+mbprint usb-list [--usb-vid ID] [--usb-pid ID]
+mbprint usb-info [--usb-serial SERIAL | --usb-bus N --usb-address N]
+mbprint usb-report [--json] [--out PATH] [--usb-serial SERIAL | --usb-bus N --usb-address N]
 ```
 
 Supported scalar config keys are `model`, `transport`, `address`, `device`,
 `density`, `feed`, `speed`, `offset_x`, `offset_y`, `align`, `dither`,
-`continuous`, `gap_mm`, `tspl_offset_mm`, `label`, `media`, and `host`.
+`continuous`, `gap_mm`, `tspl_offset_mm`, `label`, `media`, `host`, and
+`font_fallback`.
 Derived templates use `data.<field>` keys.
+
+`import-svg` converts an SVG document to an editable JSON layout. The `-o` path
+defaults to `label.json` and is overwritten if it exists. An mbprint-exported
+SVG restores its embedded source layout exactly. Other SVGs use the supported
+element mapping and report skipped features described in
+[SVG export and import](svg-export.md#import-svg-to-labeljson).
 
 ## Logging and tracing
 

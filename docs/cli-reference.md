@@ -145,13 +145,15 @@ mbprint svg [source options] [--out PATH_OR_DIRECTORY]
 One exact-size SVG is written per expanded record. A single record may target a
 specific `.svg` path; batches use an output directory. Text, shapes, QR codes,
 rotation, and clipping remain vectors. Images and barcodes are embedded PNG
-data. See [SVG export](svg-export.md) for fidelity and naming details.
+data. See [SVG export and import](svg-export.md) for fidelity, round-trip
+behavior, third-party SVG mapping, and naming details.
 
 ## Other commands
 
 ```text
 mbprint printers [--json]
 mbprint scan [--timeout SECONDS]
+mbprint import-svg SVG [-o label.json]
 mbprint config list
 mbprint config get KEY
 mbprint config set KEY VALUE
@@ -168,6 +170,12 @@ Supported scalar config keys are `model`, `transport`, `address`, `device`,
 `density`, `feed`, `speed`, `offset_x`, `offset_y`, `align`, `dither`,
 `continuous`, `gap_mm`, `tspl_offset_mm`, `label`, `media`, and `host`.
 Derived templates use `data.<field>` keys.
+
+`import-svg` converts an SVG document to an editable JSON layout. The `-o` path
+defaults to `label.json` and is overwritten if it exists. An mbprint-exported
+SVG restores its embedded source layout exactly. Other SVGs use the supported
+element mapping and report skipped features described in
+[SVG export and import](svg-export.md#import-svg-to-labeljson).
 
 ## Logging and tracing
 

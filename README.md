@@ -112,6 +112,12 @@ Export editable exact-size SVG files:
 mbprint svg -l label.json -c inventory.csv -o vectors/
 ```
 
+Convert an SVG back to an editable JSON layout:
+
+```sh
+mbprint import-svg label.svg -o converted.json
+```
+
 Tile labels on A4 with cut marks:
 
 ```sh
@@ -206,7 +212,7 @@ More model- and transport-specific guidance is in
 
 - [Data, templates, and filters](docs/data-and-templates.md)
 - [PDF generation and direct printing](docs/pdf-workflows.md)
-- [SVG export](docs/svg-export.md)
+- [SVG export and import](docs/svg-export.md)
 - [Printers and transports](docs/printers-and-transports.md)
 - [CLI reference](docs/cli-reference.md)
 - [Brother wireless configuration](docs/brother-wireless-config.md)

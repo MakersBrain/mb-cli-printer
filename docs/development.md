@@ -38,6 +38,7 @@ mbprint/
   media.py         Brother DK geometry and fitting
   pdf.py           exact-size PDF output plus page selection and rasterization
   svg.py           exact-size hybrid vector/raster SVG export
+  svgimport.py     SVG metadata round trips and SVG-to-layout element mapping
   config.py        persistent defaults
   log.py           logger setup, TRACE level, and hex dumps
   ui.py            terminal detection and progress reporters

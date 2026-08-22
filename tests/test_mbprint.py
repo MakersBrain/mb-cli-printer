@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image, ImageDraw
 
-from mbprint import data, layout, pdf, printers, protocol, wireless
+from mbprint import brother, data, layout, pdf, printers, protocol, wireless
 from mbprint import raster as R
 from mbprint.transport.file import FileTransport
 from mbprint.transport.usb import (
@@ -900,8 +900,17 @@ def test_brother_wireless_read_commands_match_native_pjl():
     assert wireless.wifi_scan_result_command() == (
         wireless.PJL_HEADER + b"@PJL INFO AVAILABLEWLAN\r\n" + wireless.PJL_FOOTER
     )
-    assert wireless.wifi_info_command() == (
-        wireless.PJL_HEADER + b"@PJL INQUIRE OBJBRNET\r\n" + wireless.PJL_FOOTER
+    assert wireless.wifi_status_command() == (
+        wireless.PJL_HEADER
+        + b'@PJL DEFAULT OBJBRNET="458867"\r\n'
+        + b"@PJL INQUIRE OBJBRNET\r\n"
+        + wireless.PJL_FOOTER
+    )
+    assert wireless.ip_address_command() == (
+        wireless.PJL_HEADER
+        + b'@PJL DEFAULT OBJBRNET="458967.2"\r\n'
+        + b"@PJL INQUIRE OBJBRNET\r\n"
+        + wireless.PJL_FOOTER
     )
 
 
@@ -911,6 +920,18 @@ def test_brother_wireless_response_decoders():
     assert wireless.parse_ip_address(reply) == "192.168.1.50"
     assert wireless.parse_wifi_status(b'"458867:0"') is False
     assert wireless.parse_ip_address(b'"458967.2:ffff-00-00-01"') is None
+    assert (
+        wireless.parse_oid_value(b'"458877:-4d-61-6b-65-72-20-57-69-46-69"', "458877")
+        == "Maker WiFi"
+    )
+    assert wireless.parse_oid_value(b'"458877:4D-61-6B-65-72"', "458877") == "Maker"
+    assert wireless.parse_oid_value(b'"458880:8"\r\n', "458880") == "8"
+    assert wireless.parse_oid_value(b'"458881:3"\r\n', "missing") is None
+
+
+def test_brother_wireless_inquire_rejects_non_numeric_oids():
+    with pytest.raises(ValueError, match="invalid OBJBRNET OID"):
+        wireless.inquire_command('458867"\r\n@PJL RESET')
 
 
 def test_brother_access_point_decoder_ignores_unknown_rows():
@@ -928,6 +949,37 @@ def test_usb_printer_class_response_decoders():
     )
     assert decode_device_id(b"\x00") is None
     assert decode_port_status(0x18) == {"selected": True, "paper_empty": False, "error": False}
+
+
+def test_brother_system_report_command_and_decoder():
+    response = (
+        b"\x00\x12<<PRINTER CONFIGURATION>>\r\n"
+        b"[Printer]\r\nPrinter =QL-1110NWB\r\nProgVer =V2.13\r\n"
+        b"[WLAN]\r\nIP Address =192.0.2.7\r\nGateway Address =192.0.2.1\r\n"
+    )
+    assert bytes.fromhex("1b 69 58 47") == brother.SYSTEM_REPORT_COMMAND
+    assert brother.decode_system_report(response).startswith("<<PRINTER CONFIGURATION>>")
+    assert brother.parse_system_report(response) == {
+        "Printer": {"Printer": "QL-1110NWB", "ProgVer": "V2.13"},
+        "WLAN": {"IP Address": "192.0.2.7", "Gateway Address": "192.0.2.1"},
+    }
+
+
+def test_brother_system_report_rejects_unrelated_response():
+    with pytest.raises(ValueError, match="not a Brother"):
+        brother.parse_system_report(b"ordinary printer reply")
+
+
+def test_usb_report_parser_defaults_to_usb_and_supports_json():
+    args = (
+        __import__("mbprint.cli", fromlist=["build_parser"])
+        .build_parser()
+        .parse_args(["usb-report", "--json", "--usb-serial", "QL-A", "--out", "report.json"])
+    )
+    assert args.transport == "usb"
+    assert args.json is True
+    assert args.usb_serial == "QL-A"
+    assert args.out == "report.json"
 
 
 def test_usb_selector_requires_one_unambiguous_device():

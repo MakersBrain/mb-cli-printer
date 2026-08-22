@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import json
 import logging
 import os
 import sys
@@ -14,7 +15,7 @@ from typing import Any
 
 from PIL import Image
 
-from mbprint import __version__, ipp, layout, pdf, printers, protocol, ui, wireless
+from mbprint import __version__, brother, ipp, layout, pdf, printers, protocol, ui, wireless
 from mbprint import config as cfg
 from mbprint import data as datamod
 from mbprint import log as mblog
@@ -908,10 +909,22 @@ def cmd_wifi(args: Args) -> int:
                     else:
                         print("no access points decoded (the printer may not support this query)")
                 else:
-                    await transport.send(wireless.wifi_info_command())
-                    reply = await _collect_response(transport, 3000)
-                    connected = wireless.parse_wifi_status(reply)
-                    address = wireless.parse_ip_address(reply)
+                    oids = [
+                        "458867",  # connected
+                        "458967.2",  # IPv4
+                        "458877",  # SSID
+                        "458880",  # encryption
+                        "458881",  # authentication
+                        "459138.2",  # infrastructure mode
+                        "459138.3",  # Wireless Direct
+                    ]
+                    replies: dict[str, bytes] = {}
+                    for oid in oids:
+                        await transport.send(wireless.inquire_command(oid))
+                        replies[oid] = await _collect_response(transport, 3000)
+                    reply = b"".join(replies.values())
+                    connected = wireless.parse_wifi_status(replies["458867"])
+                    address = wireless.parse_ip_address(replies["458967.2"])
                     state = (
                         "connected"
                         if connected
@@ -921,6 +934,36 @@ def cmd_wifi(args: Args) -> int:
                     )
                     print(f"wifi: {state}")
                     print(f"ipv4: {address or 'unknown'}")
+                    ssid = wireless.parse_oid_value(replies["458877"], "458877")
+                    encryption = wireless.parse_oid_value(replies["458880"], "458880")
+                    authentication = wireless.parse_oid_value(replies["458881"], "458881")
+                    encryption_names = {
+                        str(value): name for name, value in wireless.ENCRYPTIONS.items()
+                    }
+                    authentication_names = {
+                        str(value): name for name, value in wireless.AUTHENTICATIONS.items()
+                    }
+                    print(f"ssid: {ssid or 'unknown'}")
+                    print(
+                        "encryption: "
+                        + (
+                            encryption_names.get(encryption, encryption)
+                            if encryption
+                            else "unknown"
+                        )
+                    )
+                    print(
+                        "authentication: "
+                        + (
+                            authentication_names.get(authentication, authentication)
+                            if authentication
+                            else "unknown"
+                        )
+                    )
+                    infrastructure = wireless.parse_oid_value(replies["459138.2"], "459138.2")
+                    wireless_direct = wireless.parse_oid_value(replies["459138.3"], "459138.3")
+                    print(f"infrastructure: {_enabled(infrastructure)}")
+                    print(f"wireless direct: {_enabled(wireless_direct)}")
                 if args.raw:
                     print(f"raw ({len(reply)} bytes): {reply.hex(' ') if reply else '(no reply)'}")
 
@@ -982,6 +1025,10 @@ async def _collect_response(
     return b"".join(chunks)
 
 
+def _enabled(value: str | None) -> str:
+    return "enabled" if value == "1" else "disabled" if value == "0" else "unknown"
+
+
 def cmd_usb_info(args: Args) -> int:
     """Show descriptors and standard Printer Class information without changing settings."""
     from mbprint.transport.usb import USBTransport
@@ -1019,6 +1066,38 @@ def cmd_usb_info(args: Args) -> int:
                     + (", paper empty" if port["paper_empty"] else ", paper present")
                     + (", error" if port["error"] else ", no error")
                 )
+
+    asyncio.run(query())
+    return 0
+
+
+def cmd_usb_report(args: Args) -> int:
+    """Fetch the Brother read-only printer configuration/system report."""
+    from mbprint.transport.usb import USBTransport
+
+    async def query() -> None:
+        transport = _make_transport(args, None)
+        if not isinstance(transport, USBTransport):
+            raise SystemExit("usb-report requires --transport usb")
+        async with transport:
+            if transport.device_info["vid"] != 0x04F9:
+                raise SystemExit("usb-report is only supported for Brother printers")
+            await transport.send(brother.SYSTEM_REPORT_COMMAND)
+            response = await _collect_response(transport, 3000)
+        if not response:
+            raise SystemExit("printer did not return a system report")
+        try:
+            if args.json:
+                output = json.dumps(brother.parse_system_report(response), indent=2)
+            else:
+                output = brother.decode_system_report(response)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+        if args.out:
+            Path(args.out).write_text(output + "\n", encoding="utf-8")
+            print(f"wrote system report to {args.out}")
+        else:
+            print(output)
 
     asyncio.run(query())
     return 0
@@ -1175,6 +1254,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("usb-info", help="show read-only USB printer information", parents=[common])
     add_printer_options(sp)
     sp.set_defaults(func=cmd_usb_info, transport="usb")
+
+    sp = sub.add_parser(
+        "usb-report", help="fetch a Brother configuration/system report", parents=[common]
+    )
+    add_printer_options(sp)
+    sp.add_argument("--json", action="store_true", help="emit parsed sections as JSON")
+    sp.set_defaults(func=cmd_usb_report, transport="usb")
 
     return p
 

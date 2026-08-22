@@ -129,6 +129,7 @@ mbprint wifi status [--raw] [transport options]
 mbprint wifi [configure] --ssid NAME [--password-stdin] [transport options]
 mbprint usb-list [--usb-vid ID] [--usb-pid ID]
 mbprint usb-info [--usb-serial SERIAL | --usb-bus N --usb-address N]
+mbprint usb-report [--json] [--out PATH] [--usb-serial SERIAL | --usb-bus N --usb-address N]
 ```
 
 Supported scalar config keys are `model`, `transport`, `address`, `device`,

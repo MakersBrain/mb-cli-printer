@@ -255,9 +255,8 @@ class USBTransport(Transport):
     async def close(self) -> None:
         if self._dev is not None:
             try:
-                import usb.util
-
-                usb.util.dispose_resources(self._dev)
+                _, usb_util = _usb_modules()
+                usb_util.dispose_resources(self._dev)
             except Exception:
                 pass
             self._dev = None

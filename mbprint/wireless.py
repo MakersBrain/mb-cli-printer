@@ -55,6 +55,14 @@ def _pjl(command: bytes) -> bytes:
     return PJL_HEADER + b"@PJL " + command + b"\r\n" + PJL_FOOTER
 
 
+def inquire_command(oid: str) -> bytes:
+    """Build the native two-line OBJBRNET getter for one numeric OID."""
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", oid):
+        raise ValueError(f"invalid OBJBRNET OID {oid!r}")
+    body = b'@PJL DEFAULT OBJBRNET="' + oid.encode("ascii") + b'"\r\n@PJL INQUIRE OBJBRNET\r\n'
+    return PJL_HEADER + body + PJL_FOOTER
+
+
 def wifi_scan_start_command() -> bytes:
     """Start the access-point search used by Brother's setup application."""
     return _pjl(_parameter("458845", "31-3a"))
@@ -65,9 +73,22 @@ def wifi_scan_result_command() -> bytes:
     return _pjl(b"INFO AVAILABLEWLAN")
 
 
-def wifi_info_command() -> bytes:
-    """Request OBJBRNET values containing Wi-Fi state and addresses."""
-    return _pjl(b"INQUIRE OBJBRNET")
+def wifi_status_command() -> bytes:
+    """Request Brother's wireless connection-state OID."""
+    return inquire_command("458867")
+
+
+def ip_address_command() -> bytes:
+    """Request Brother's wireless IPv4-address OID."""
+    return inquire_command("458967.2")
+
+
+def parse_oid_value(data: bytes, oid: str) -> str | None:
+    match = re.search(rb'"?' + re.escape(oid.encode("ascii")) + rb':([^"\r\n\f]*)', data)
+    if not match:
+        return None
+    value = match.group(1).decode("utf-8", errors="replace")
+    return _decode_ssid(value) if oid == "458877" else value
 
 
 def parse_wifi_status(data: bytes) -> bool | None:
@@ -89,10 +110,11 @@ def parse_ip_address(data: bytes) -> str | None:
 
 
 def _decode_ssid(value: str) -> str:
-    if not re.fullmatch(r"(?:-[0-9a-fA-F]{1,2})+", value):
+    parts = value.strip("-").split("-")
+    if len(parts) < 2 or any(not re.fullmatch(r"[0-9a-fA-F]{1,2}", part) for part in parts):
         return value
     try:
-        return bytes(int(part, 16) for part in value.lstrip("-").split("-")).decode("utf-8")
+        return bytes(int(part, 16) for part in parts).decode("utf-8")
     except (UnicodeDecodeError, ValueError):
         return value
 

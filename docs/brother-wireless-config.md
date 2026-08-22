@@ -1,8 +1,9 @@
 # Brother wireless configuration
 
 Notes on how Brother's iPrint&Label app puts a QL on a wireless network and on
-the corresponding `mbprint wifi` implementation. Hardware validation of the
-USB control path is still pending.
+the corresponding `mbprint wifi` implementation. The USB control path, AP scan,
+and connection-setting getters are hardware-validated on a QL-1110NWB;
+changing saved credentials remains untested.
 
 ## How the app does it
 
@@ -41,6 +42,17 @@ the library are `%-12345X@PJL`, `@PJL %s`, `DEFAULT OBJBRNET="`,
 `createSendableCommandData(params, needReboot)` concatenates `pjlHeader`, one
 command per parameter, and `pjlFooter`, then appends `rebootCommand` when
 `needReboot` is set. The app always sets it.
+
+An `OBJBRNET` getter is a two-line PJL transaction. `PjlParam::fromOid` emits
+the first line and `PjlParam::fromPjlCom` emits the second:
+
+```text
+@PJL DEFAULT OBJBRNET="458867"\r\n
+@PJL INQUIRE OBJBRNET\r\n
+```
+
+Putting the OID directly on `INQUIRE`, or sending `INQUIRE` without the
+preceding `DEFAULT`, does not produce the intended response.
 
 The parameters are numeric ids rather than dotted OIDs, which is why searching
 the library for `1.3.6.1` or `2435` finds nothing. `createCommand` emits them in
@@ -123,35 +135,51 @@ The reversed read-only commands are also available for capture-testing:
 
 ```sh
 mbprint usb-info
+mbprint usb-report
+mbprint usb-report --json --out printer-report.json
 mbprint wifi status --raw
 mbprint wifi scan --scan-wait 5 --raw
 ```
 
 `usb-info` uses the standard USB Printer Class `GET_DEVICE_ID` and
-`GET_PORT_STATUS` control requests. `wifi status` asks for `OBJBRNET` and
-decodes wireless OID `458867` plus IPv4 OID `458967.2`. `wifi scan` starts the
-Brother AP search (`458845:31-3a`) and then requests `INFO AVAILABLEWLAN`.
-Use `--raw` during hardware validation because firmware variants may return a
-row shape the conservative decoder does not yet recognize.
+`GET_PORT_STATUS` control requests. `usb-report` sends the read-only Brother
+system-report command (`1b 69 58 47`) and returns the printer's firmware and
+boot versions, counters, error history, template and power settings, Bluetooth
+state, and WLAN connection details. JSON output groups values by the report's
+sections. The report contains local identifiers such as the serial number,
+SSID, IP addresses, and MAC addresses; review it before sharing. `wifi status`
+asks for `OBJBRNET` and
+decodes connection OID `458867`, IPv4 `458967.2`, SSID `458877`, encryption
+`458880`, authentication `458881`, Infrastructure mode `459138.2`, and Wireless
+Direct `459138.3`. `wifi scan` starts the Brother AP search (`458845:31-3a`)
+and then requests `INFO AVAILABLEWLAN`. Use `--raw` because firmware variants
+may return a row shape the conservative decoder does not yet recognize.
 
 The capture contains a recoverable credential. Keep it out of version control
 and delete it when it is no longer needed.
 
 ## What is not established
 
-- Whether the QL accepts this on the channel `mbprint` prints through. A
-  QL-1110NWB on USB did not answer read-only PJL (`@PJL INFO ID`,
-  `INFO STATUS`, `INFO AVAILABLEWLAN`) on the interface 0 alt 0 bulk pair,
-  either cold or after `ESC @`. It returned only leftover raster status blocks,
-  then nothing. Interface 0 alt 1 and interface 1 alt 1 are both printer class
-  with protocol 4. USB Printer Class 1.1 assigns IEEE 1284.4 to protocol 3 and
-  reserves protocol 4, so Brother's interface must be capture-tested rather
-  than assumed to use standard 1284.4 framing. Use `--usb-interface` and
-  `--usb-alt` to select the descriptor pair while testing. See the
-  [USB-IF Printer Class 1.1 specification](https://www.usb.org/sites/default/files/usbprint11a021811.pdf).
+- A QL-1110NWB accepted the AP-search trigger and returned two valid `VAP` rows
+  from `INFO AVAILABLEWLAN` on interface 0 alt 0. The 285-byte reply arrived in
+  five 64-byte-or-smaller packets, validating both the ordinary USB bulk channel
+  and response collection. Standard `GET_DEVICE_ID`, `GET_PORT_STATUS`, and the
+  32-byte Brother raster-status request also succeeded on that channel.
+- The four-byte system-report request returned a complete 4.6 KB configuration
+  report on a QL-1110NWB, including its printer, power, template, Bluetooth, and
+  WLAN sections. The CLI strips the two-byte binary response prefix before
+  displaying or parsing it.
+- The native two-line getter returned connected state, IPv4 address, SSID,
+  encryption, authentication, Infrastructure mode, and Wireless Direct state
+  on interface 0 alt 0. `INQUIRE OBJBRNET` without the preceding OID-selection
+  line returned `Invalid object ID`; putting the OID directly on `INQUIRE`
+  returned no reply.
+- Sending the credential-bearing settings command and reboot has not been
+  hardware-tested. That needs a disposable network configuration or an exact
+  capture from the app before it should be considered validated.
 
-Capturing one real setup from the app would validate the recovered generator,
-settle the USB framing, and give a known-good blob to compare against.
+Capturing one real setup from the app would validate the remaining generator
+details and give a known-good credential-bearing blob to compare against.
 
 ## Prior work
 

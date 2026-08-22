@@ -30,6 +30,8 @@ class LaPosteFormat:
     row_pitch_mm: float
     stamp_width_mm: float = 63.5
     stamp_height_mm: float = 33.9
+    sheet_width_mm: float = 210.0
+    sheet_height_mm: float = 297.0
 
 
 # La Poste's format names and dimensions come from the printing-config endpoint.
@@ -83,10 +85,14 @@ def extract_la_poste_labels(pages: list[RenderedPage], format_code: str) -> list
 
     labels: list[RenderedPage] = []
     for page in pages:
-        if abs(page.width_mm - 210.0) > 1.5 or abs(page.height_mm - 297.0) > 1.5:
+        if (
+            abs(page.width_mm - sheet.sheet_width_mm) > 1.5
+            or abs(page.height_mm - sheet.sheet_height_mm) > 1.5
+        ):
             raise SystemExit(
-                f"La Poste format {code} needs an A4 PDF; page {page.number} is "
-                f"{page.width_mm:.2f}x{page.height_mm:.2f}mm"
+                f"La Poste format {code} needs a "
+                f"{sheet.sheet_width_mm:g}x{sheet.sheet_height_mm:g}mm sheet; page "
+                f"{page.number} is {page.width_mm:.2f}x{page.height_mm:.2f}mm"
             )
         x_scale = page.image.width / page.width_mm
         y_scale = page.image.height / page.height_mm
@@ -223,8 +229,8 @@ def write_labels(
     pages = _prepare(images, bilevel, dither)
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    dpi = _dpi(dots_per_mm)
-    save_size: dict[str, float | tuple[float, float]]
+    resolution = _dpi(dots_per_mm)
+    dpi_xy = (resolution, resolution)
     if page_size_mm is not None:
         width_mm, height_mm = page_size_mm
         if width_mm <= 0 or height_mm <= 0:
@@ -239,21 +245,9 @@ def write_labels(
         ]
         # Pillow accepts independent X/Y resolutions. Deriving them from the
         # rounded raster makes the PDF MediaBox exact at any requested DPI.
-        save_size = {
-            "dpi": (
-                target[0] * MM_PER_INCH / width_mm,
-                target[1] * MM_PER_INCH / height_mm,
-            )
-        }
-    else:
-        save_size = {"resolution": dpi}
+        dpi_xy = (target[0] * MM_PER_INCH / width_mm, target[1] * MM_PER_INCH / height_mm)
     pages[0].save(
-        out,
-        "PDF",
-        save_all=True,
-        append_images=pages[1:],
-        title=title or None,
-        **save_size,
+        out, "PDF", dpi=dpi_xy, save_all=True, append_images=pages[1:], title=title or None
     )
     return out
 

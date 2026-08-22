@@ -658,7 +658,7 @@ def test_la_poste_sheet_extraction_keeps_only_occupied_slots():
 
 
 def test_la_poste_sheet_extraction_requires_a4_and_ink():
-    with pytest.raises(SystemExit, match="needs an A4 PDF"):
+    with pytest.raises(SystemExit, match="needs a 210x297mm sheet"):
         pdf.extract_la_poste_labels(
             [pdf.RenderedPage(2, 100, 150, Image.new("RGB", (1000, 1500), "white"))], "L24A"
         )
@@ -670,12 +670,12 @@ def test_la_poste_sheet_extraction_requires_a4_and_ink():
 
 
 def test_pdf_fit_shrinks_to_a_non_brother_head():
-    from mbprint import cli
+    from mbprint import media
 
     printer = printers.by_id("m110")
-    fitted = cli._fit_pdf_to_head(Image.new("RGB", (800, 400), "white"), printer)
+    fitted = media.fit_to_head(Image.new("RGB", (800, 400), "white"), printer.width_px)
     assert fitted.size == (printer.width_px, printer.width_px // 2)
-    assert cli._fit_pdf_to_head(Image.new("RGB", (200, 100), "white"), printer).size == (
+    assert media.fit_to_head(Image.new("RGB", (200, 100), "white"), printer.width_px).size == (
         200,
         100,
     )

@@ -191,3 +191,19 @@ def fit(img: Image.Image, media: Media, min_rows: int = 0) -> Image.Image:
         sized.convert("RGB"), ((printable_w - sized.width) // 2, (printable_h - sized.height) // 2)
     )
     return canvas
+
+
+def fit_to_head(img: Image.Image, width_px: int, rotated: bool = False) -> Image.Image:
+    """Shrink artwork that is wider than a bare print head, keeping its aspect.
+
+    Used for printers that have no DK media table: the only constraint is how
+    many dots the head is wide, measured across the feed direction.
+    """
+    current = img.height if rotated else img.width
+    if current <= width_px:
+        return img
+    scale = width_px / current
+    return img.resize(
+        (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+        Image.Resampling.LANCZOS,
+    )

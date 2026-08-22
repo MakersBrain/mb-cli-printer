@@ -84,6 +84,16 @@ def logging_parser() -> argparse.ArgumentParser:
     return p
 
 
+def add_laposte_format(p: argparse.ArgumentParser, *, help: str, required: bool = False) -> None:
+    p.add_argument(
+        "--laposte-format",
+        required=required,
+        type=str.upper,
+        choices=sorted(pdf.LA_POSTE_FORMATS),
+        help=help,
+    )
+
+
 def add_source_options(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--label", "-l", default=None, help="layout file: label.json, or an SVG template"
@@ -864,18 +874,6 @@ def _pdf_page_on_media(
     return mediamod.fit(image, media, printer.min_rows)
 
 
-def _fit_pdf_to_head(image: Image.Image, printer: printers.PrinterDef) -> Image.Image:
-    """Shrink a PDF raster to a non-Brother print head when --fit is explicit."""
-    current = image.height if printer.rotated else image.width
-    if current <= printer.width_px:
-        return image
-    scale = printer.width_px / current
-    return image.resize(
-        (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
-        Image.Resampling.LANCZOS,
-    )
-
-
 def cmd_print_pdf(args: Args) -> int:
     """Rasterize an exact-size PDF and print each selected page as one label."""
     printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
@@ -902,7 +900,7 @@ def cmd_print_pdf(args: Args) -> int:
             _pdf_page_on_media(page, media, printer, args.fit) if media is not None else page.image
         )
         if media is None and args.fit:
-            image = _fit_pdf_to_head(image, printer)
+            image = mediamod.fit_to_head(image, printer.width_px, printer.rotated)
         raster = protocol.prepare_raster(image, printer, opts, dither)
         for copy in range(1, args.copies + 1):
             rasters.append(raster)
@@ -925,12 +923,15 @@ def cmd_print_pdf(args: Args) -> int:
 
 def cmd_extract_pdf(args: Args) -> int:
     """Convert a La Poste A4 sheet into one exact-size stamp per PDF page."""
-    dpi = args.dpi
-    if dpi is None and (args.model or args.device):
-        printer = printers.resolve(args.model, args.device)
+    model, device = _pick(args, "model", None), _pick(args, "device", None)
+    if args.dpi:
+        dpi = args.dpi
+    elif model or device:
+        printer = printers.resolve(model, device)
         dpi = printer.dpi
         log.info("PDF raster: %s [%s] at %ddpi", printer.name, printer.id, printer.dpi)
-    dpi = dpi or 254
+    else:
+        dpi = 254
     pages = pdf.render_pages(args.pdf_file, dpi, args.pages)
     labels = pdf.extract_la_poste_labels(pages, args.laposte_format)
     path = pdf.write_labels(
@@ -1343,11 +1344,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_printer_options(sp)
     sp.add_argument("--pages", help="one-based pages and ranges, e.g. 1,3-5 (default all)")
     sp.add_argument("--copies", type=_positive_int, default=1, help="copies of each page")
-    sp.add_argument(
-        "--laposte-format",
-        type=str.upper,
-        choices=sorted(pdf.LA_POSTE_FORMATS),
-        help="extract occupied Mon Timbre en Ligne stamps from this A4 output format",
+    add_laposte_format(
+        sp, help="extract occupied Mon Timbre en Ligne stamps from this A4 output format"
     )
     sp.add_argument(
         "--fit",
@@ -1367,12 +1365,8 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
     )
     sp.add_argument("pdf_file", metavar="PDF", help="Mon Timbre en Ligne A4 PDF")
-    sp.add_argument(
-        "--laposte-format",
-        required=True,
-        type=str.upper,
-        choices=sorted(pdf.LA_POSTE_FORMATS),
-        help="format selected on La Poste's printing-options page",
+    add_laposte_format(
+        sp, required=True, help="format selected on La Poste's printing-options page"
     )
     sp.add_argument("--pages", help="one-based source pages and ranges, e.g. 1,3-5 (default all)")
     sp.add_argument("--model", "-m", default=None, help="use this printer model's native DPI")

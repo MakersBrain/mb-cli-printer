@@ -345,7 +345,9 @@ class Label:
     def load(cls, path: str | Path) -> Label:
         p = Path(path)
         if p.suffix.lower() == ".svg":
-            return cls._load_svg(p)
+            from mbprint import svgtemplate
+
+            return svgtemplate.load(p)
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -375,33 +377,6 @@ class Label:
             elements=list(data.get("elements") or []),
             fields=list(data.get("fields") or []),
             source=p,
-        )
-
-    @classmethod
-    def _load_svg(cls, p: Path) -> Label:
-        from mbprint import svgtemplate
-
-        try:
-            source = p.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            raise SystemExit(f"label file not found: {p}")
-        geometry = svgtemplate.parse(source, p.stem)
-        log.debug(
-            "loaded %s: SVG template, %smm x %smm at %s dots/mm",
-            p,
-            f"{geometry.width_mm:g}",
-            f"{geometry.height_mm:g}",
-            f"{geometry.dots_per_mm:g}",
-        )
-        return cls(
-            width_mm=geometry.width_mm,
-            height_mm=geometry.height_mm,
-            dots_per_mm=geometry.dots_per_mm,
-            round=geometry.round,
-            continuous=geometry.continuous,
-            name=geometry.name,
-            source=p,
-            svg_source=source,
         )
 
 

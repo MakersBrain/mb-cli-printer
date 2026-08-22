@@ -32,6 +32,14 @@ def _tag(node: ET.Element) -> str:
     return node.tag.rsplit("}", 1)[-1]
 
 
+def parse_root(source: str) -> ET.Element:
+    """Parse an SVG document, or exit with a readable message."""
+    try:
+        return ET.fromstring(source)
+    except ET.ParseError as exc:
+        raise SystemExit(f"not a readable SVG document: {exc}")
+
+
 def _number(value: str | None, default: float = 0.0) -> float:
     match = re.match(r"\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)", value or "")
     return default if match is None else float(match.group(1))
@@ -60,7 +68,7 @@ def _millimetres(value: str | None) -> float | None:
     return float(match.group(1)) * _MM_PER_UNIT[match.group(2)]
 
 
-def _geometry(root: ET.Element, stem: str) -> tuple[float, float, float, bool, bool, str]:
+def geometry(root: ET.Element, stem: str) -> tuple[float, float, float, bool, bool, str]:
     box = _viewbox(root)
     width_mm, height_mm = _millimetres(root.get("width")), _millimetres(root.get("height"))
     if box is not None:
@@ -335,10 +343,7 @@ def _convert_node(
 
 def convert(source: str, stem: str = "") -> tuple[dict[str, Any], list[str]]:
     """Convert SVG source to label.json data, preferring exact embedded metadata."""
-    try:
-        root = ET.fromstring(source)
-    except ET.ParseError as exc:
-        raise SystemExit(f"not a readable SVG document: {exc}")
+    root = parse_root(source)
     metadata = next(
         (
             node
@@ -356,7 +361,7 @@ def convert(source: str, stem: str = "") -> tuple[dict[str, Any], list[str]]:
             raise SystemExit("mbprint SVG metadata must contain a JSON object")
         return value, []
 
-    width_mm, height_mm, dots_per_mm, round_label, continuous, name = _geometry(root, stem)
+    width_mm, height_mm, dots_per_mm, round_label, continuous, name = geometry(root, stem)
     viewbox = _viewbox(root)
     root_width = viewbox[2] if viewbox else width_mm * dots_per_mm
     root_height = viewbox[3] if viewbox else height_mm * dots_per_mm

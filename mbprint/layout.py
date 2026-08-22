@@ -82,7 +82,7 @@ _FREE_FONT_SUBSTITUTIONS = {
 }
 _FONT_SUFFIXES = {".ttf", ".otf", ".ttc"}
 _FONT_SEARCH_DIRS: tuple[Path, ...] = ()
-_ALLOW_FONT_FALLBACK = False
+_ALLOW_FONT_FALLBACK = True
 _FONT_BUNDLE_ENTRY_POINT = "mbprint.font_bundles"
 
 # Extra room around an element's box so unwrapped text can overflow like it
@@ -125,7 +125,7 @@ def _primary_font_family(value: str) -> str:
 def configure_fonts(
     source: str | Path | None = None,
     font_dirs: list[str] | None = None,
-    allow_fallback: bool = False,
+    allow_fallback: bool = True,
 ) -> None:
     """Configure exact font lookup for one label-rendering command.
 

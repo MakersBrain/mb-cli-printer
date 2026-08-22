@@ -55,10 +55,12 @@ than applying filter, limit, or copy selection.
 | Option | Meaning |
 |---|---|
 | `--font-dir PATH` | search a bundled font directory; repeatable |
-| `--font-fallback`, `--no-font-fallback` | allow substitution, or override its configured default |
+| `--font-fallback`, `--no-font-fallback` | allow substitution (default), or require exact fonts |
 
-Missing `label.json` font families or styles are errors by default. A `fonts/`
-directory beside the label is discovered automatically.
+Missing `label.json` font families use compatible or generic substitutions by
+default and emit warnings. `--no-font-fallback` makes missing families or
+styles errors. A `fonts/` directory beside the label is discovered
+automatically.
 
 ## Printer and media options
 

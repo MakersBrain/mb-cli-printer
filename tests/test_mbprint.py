@@ -1280,12 +1280,13 @@ def test_config_data_table_keeps_definition_order(tmp_path, monkeypatch):
     assert cfgmod.data_templates(loaded) == [("qr", "https://x/{{brand}}")]
 
 
-def test_configured_font_fallback_can_be_overridden(monkeypatch):
+def test_font_fallback_defaults_true_and_can_be_overridden(monkeypatch):
     from mbprint import cli
 
     label = layout.Label(width_mm=30, height_mm=20)
     seen: list[bool] = []
-    monkeypatch.setattr(cli.cfg, "load", lambda: {"font_fallback": True})
+    settings: dict[str, bool] = {}
+    monkeypatch.setattr(cli.cfg, "load", lambda: settings)
     monkeypatch.setattr(
         layout,
         "configure_fonts",
@@ -1293,8 +1294,12 @@ def test_configured_font_fallback_can_be_overridden(monkeypatch):
     )
 
     cli._configure_label_fonts(SimpleNamespace(font_fallback=None, font_dir=None), label)
+    settings["font_fallback"] = False
+    cli._configure_label_fonts(SimpleNamespace(font_fallback=None, font_dir=None), label)
+    cli._configure_label_fonts(SimpleNamespace(font_fallback=True, font_dir=None), label)
+    settings["font_fallback"] = True
     cli._configure_label_fonts(SimpleNamespace(font_fallback=False, font_dir=None), label)
-    assert seen == [True, False]
+    assert seen == [True, False, True, False]
 
 
 def test_unknown_config_key_mentions_the_data_table():

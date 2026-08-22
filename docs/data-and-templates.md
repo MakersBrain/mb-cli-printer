@@ -140,24 +140,26 @@ Include every style used by the layout. If a label requests bold, having only
 the regular face is an error. Font licenses must permit redistribution when
 files are committed or packaged.
 
-Use `--font-fallback` only when substitution is intentional:
+Font fallback is enabled by default for `print`, `pdf`, `svg`, and `preview`.
+Missing families use a compatible mapping above when available, then a matching
+generic sans-serif, serif, or monospace font. Every substitution emits a
+warning.
+
+Require exact matching for one command with:
 
 ```sh
-mbprint pdf -l product-label/label.json --font-fallback -o labels.pdf
+mbprint pdf -l product-label/label.json --no-font-fallback -o labels.pdf
 ```
 
-To make that policy persistent for `print`, `pdf`, `svg`, and `preview`:
+Make strict matching persistent with:
 
 ```sh
-mbprint config set font_fallback true
+mbprint config set font_fallback false
 ```
 
-Use `--no-font-fallback` on an individual command to restore strict matching,
-or `mbprint config unset font_fallback` to remove the default.
-
-With that flag, a missing proprietary family first uses its compatible mapping
-above. Other missing families use a matching generic sans-serif, serif, or
-monospace font. Every substitution emits a warning.
+`--font-fallback` overrides that configured false value for one command.
+`mbprint config unset font_fallback` returns to the built-in fallback-enabled
+default.
 
 ## Optional segments
 

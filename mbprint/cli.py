@@ -165,7 +165,7 @@ def add_font_options(p: argparse.ArgumentParser) -> None:
         "--font-fallback",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="allow font substitution (or disable a configured default with --no-font-fallback)",
+        help="allow font substitution (default; use --no-font-fallback for exact matching)",
     )
 
 
@@ -472,7 +472,7 @@ def _configure_label_fonts(args: Args, label: layout.Label) -> None:
     layout.configure_fonts(
         source=label.source,
         font_dirs=getattr(args, "font_dir", None),
-        allow_fallback=bool(_pick(args, "font_fallback", False)),
+        allow_fallback=bool(_pick(args, "font_fallback", True)),
     )
 
 

@@ -13,9 +13,8 @@ Optional free-font substitutes for common proprietary families:
 | Comic Sans MS | Comic Neue |
 
 Install with `uv sync --extra fonts-compatible`, or use `uv sync --extra fonts`
-for every maintained bundle. Substitution happens only with the explicit
-`--font-fallback` flag; strict mode continues to reject a missing requested
-family.
+for every maintained bundle. Substitution is enabled by default and emits a
+warning. Use `--no-font-fallback` when exact family matching is required.
 
 Liberation is designed for metric compatibility with Arial, Times New Roman,
 and Courier New. The other mappings are visually similar choices rather than

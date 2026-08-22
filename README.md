@@ -55,13 +55,12 @@ font installation is required for their families. The aggregate includes:
 - JetBrainsMono Nerd Font;
 - Liberation Sans/Serif/Mono, Gelasio, Anton, and Comic Neue.
 
-Exact font matching remains the default. Free aliases for unavailable Arial,
-Helvetica, Georgia, Times New Roman, Courier New, Impact, and Comic Sans MS
-are used only when `--font-fallback` is present:
+Font fallback is enabled by default. Unavailable Arial, Helvetica, Georgia,
+Times New Roman, Courier New, Impact, and Comic Sans MS use their free aliases
+and emit a warning. Require exact fonts for one command with:
 
 ```sh
-mbprint pdf -l label.json --font-fallback -o labels.pdf
-mbprint print -l label.json --font-fallback --model m110
+mbprint pdf -l label.json --no-font-fallback -o labels.pdf
 ```
 
 See [Fonts in label.json](docs/data-and-templates.md#fonts-in-labeljson) for
@@ -228,14 +227,15 @@ mbprint config set model m110
 mbprint config set align right
 mbprint config set offset_x 6
 mbprint config set density 7
-mbprint config set font_fallback true
+mbprint config set font_fallback false  # persist strict font matching
 mbprint config set data.brand "Example Ceramics"
 mbprint config list
 ```
 
 The configuration is one active set of defaults, not a collection of per-model
-profiles. Command-line values override it. For example,
-`--no-font-fallback` temporarily disables a configured `font_fallback = true`.
+profiles. Command-line values override it. Font fallback defaults to true;
+`--no-font-fallback` disables it for one command, while a configured false
+value makes strict matching persistent.
 
 ## Troubleshooting
 

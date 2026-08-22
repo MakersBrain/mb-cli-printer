@@ -186,6 +186,26 @@ def _installed_font_bundle_dirs() -> tuple[Path, ...]:
     return tuple(dict.fromkeys(directories))
 
 
+def _face_keys(family: str, style: str, path: Path) -> tuple[str, ...]:
+    """Every name a bundled face answers to.
+
+    A face is indexed both by the family it declares and by its file name with
+    the declared style removed. Nerd Font builds declare an abbreviated family
+    ("JetBrainsMono NF") while their files -- and the people who write the
+    name into a layout -- say "JetBrainsMono Nerd Font", so indexing only the
+    declared name leaves a bundled face unreachable by the name it is asked
+    for. Without this the lookup falls through to the host, which is exactly
+    what a portable bundle is meant to avoid.
+    """
+    keys = [_font_key(family)]
+    stem, style_key = _font_key(path.stem), _font_key(style)
+    if style_key and stem.endswith(style_key):
+        stem = stem[: -len(style_key)]
+    if stem and stem not in keys:
+        keys.append(stem)
+    return tuple(keys)
+
+
 @lru_cache(maxsize=16)
 def _bundled_faces(
     directories: tuple[Path, ...],
@@ -202,6 +222,7 @@ def _bundled_faces(
                 log.warning("cannot load bundled font %s", path)
                 continue
             face_bold, face_italic = _style_flags(style or "")
+            keys = _face_keys(family or path.stem, style or "", path)
             variations: list[str] = []
             # Not every face is a variable font, and Pillow only grows
             # get_variation_names() when it was built against a FreeType with
@@ -209,19 +230,15 @@ def _bundled_faces(
             # without named instances.
             with contextlib.suppress(AttributeError, OSError):
                 variations = [name.decode(errors="replace") for name in font.get_variation_names()]
-            if variations:
-                for variation in variations:
-                    variation_bold, variation_italic = _style_flags(variation)
-                    faces.append(
-                        (
-                            _font_key(family or path.stem),
-                            variation_bold,
-                            face_italic or variation_italic,
-                            str(path),
+            for key in keys:
+                if variations:
+                    for variation in variations:
+                        variation_bold, variation_italic = _style_flags(variation)
+                        faces.append(
+                            (key, variation_bold, face_italic or variation_italic, str(path))
                         )
-                    )
-            else:
-                faces.append((_font_key(family or path.stem), face_bold, face_italic, str(path)))
+                else:
+                    faces.append((key, face_bold, face_italic, str(path)))
     return tuple(faces)
 
 

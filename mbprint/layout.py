@@ -299,6 +299,9 @@ class Label:
     elements: list[Element] = field(default_factory=list)
     fields: list[Element] = field(default_factory=list)
     source: Path | None = None
+    # Set for SVG layouts: the document is kept whole and rendered by an
+    # external SVG renderer instead of element by element.
+    svg_source: str | None = None
 
     @property
     def width_px(self) -> int:
@@ -310,6 +313,10 @@ class Label:
 
     def templates(self) -> list[str]:
         """Every template string in the layout: text, QR data and barcode data."""
+        if self.svg_source is not None:
+            from mbprint import svgtemplate
+
+            return svgtemplate.templates(self.svg_source)
         return [
             el[key]
             for el in self.elements
@@ -337,6 +344,8 @@ class Label:
     @classmethod
     def load(cls, path: str | Path) -> Label:
         p = Path(path)
+        if p.suffix.lower() == ".svg":
+            return cls._load_svg(p)
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -366,6 +375,33 @@ class Label:
             elements=list(data.get("elements") or []),
             fields=list(data.get("fields") or []),
             source=p,
+        )
+
+    @classmethod
+    def _load_svg(cls, p: Path) -> Label:
+        from mbprint import svgtemplate
+
+        try:
+            source = p.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise SystemExit(f"label file not found: {p}")
+        geometry = svgtemplate.parse(source, p.stem)
+        log.debug(
+            "loaded %s: SVG template, %smm x %smm at %s dots/mm",
+            p,
+            f"{geometry.width_mm:g}",
+            f"{geometry.height_mm:g}",
+            f"{geometry.dots_per_mm:g}",
+        )
+        return cls(
+            width_mm=geometry.width_mm,
+            height_mm=geometry.height_mm,
+            dots_per_mm=geometry.dots_per_mm,
+            round=geometry.round,
+            continuous=geometry.continuous,
+            name=geometry.name,
+            source=p,
+            svg_source=source,
         )
 
 
@@ -612,6 +648,10 @@ def render(
     label: Label, record: Record | None = None, scale: float = 1.0, decimal: str = ","
 ) -> Image.Image:
     """Render one label to an RGB image. `scale` > 1 renders for higher-dpi heads."""
+    if label.svg_source is not None:
+        from mbprint import svgtemplate
+
+        return svgtemplate.render(label, record, scale, decimal)
     record = record or {}
     width = max(1, round(label.width_px * scale))
     height = max(1, round(label.height_px * scale))

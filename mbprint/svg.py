@@ -161,6 +161,11 @@ def _qr(parent: ET.Element, el: layout.Element, x: float, y: float, w: float, h:
 
 def render(label: layout.Label, record: layout.Record | None = None, decimal: str = ",") -> str:
     """Render one record as an exact-physical-size SVG document."""
+    if label.svg_source is not None:
+        # An SVG layout is already a document: fill it in rather than rebuild it.
+        from mbprint import svgtemplate
+
+        return svgtemplate.substitute(label.svg_source, record, decimal)
     record = record or {}
     width, height = label.width_px, label.height_px
     root = ET.Element(

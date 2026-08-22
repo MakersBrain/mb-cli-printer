@@ -118,6 +118,12 @@ Convert an SVG back to an editable JSON layout:
 mbprint import-svg label.svg -o converted.json
 ```
 
+Print from an SVG drawn in a design tool, placeholders and all:
+
+```sh
+mbprint print -l label.svg -c inventory.csv --model m110
+```
+
 Tile labels on A4 with cut marks:
 
 ```sh
@@ -213,6 +219,7 @@ More model- and transport-specific guidance is in
 - [Data, templates, and filters](docs/data-and-templates.md)
 - [PDF generation and direct printing](docs/pdf-workflows.md)
 - [SVG export and import](docs/svg-export.md)
+- [SVG labels as templates](docs/svg-templates.md)
 - [Printers and transports](docs/printers-and-transports.md)
 - [CLI reference](docs/cli-reference.md)
 - [Brother wireless configuration](docs/brother-wireless-config.md)

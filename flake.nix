@@ -119,6 +119,7 @@
             ripgrep
             jq
             unzip
+            resvg # rasterizes SVG label templates for print, pdf, and preview
             # protocol capture and analysis
             (python3.withPackages (ps: with ps; [ androguard pyshark ]))
             # mbprint itself

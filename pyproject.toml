@@ -16,6 +16,9 @@ dependencies = [
 tui = ["rich>=13.7"]
 usb = ["pyusb>=1.2"]
 barcode = ["python-barcode>=0.15"]
+# Pure-Python rasterizer for SVG label templates, when no resvg,
+# rsvg-convert, or inkscape binary is available. Needs system cairo.
+svg = ["cairosvg>=2.7"]
 
 [project.scripts]
 mbprint = "mbprint.cli:main"
@@ -86,6 +89,7 @@ module = [
     "serial.*",
     "qrcode.*",
     "pypdfium2.*",
+    "cairosvg.*",
 ]
 ignore_missing_imports = true
 

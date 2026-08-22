@@ -122,6 +122,12 @@ When one record is rendered and `--out` ends in `.svg`, that exact path is
 used. Otherwise `--out` is a directory and files are named with a stable
 numeric prefix, such as `001-AG-EX-0001.svg`.
 
+## The other direction
+
+An SVG file can also be a layout: `mbprint print -l label.svg` fills its
+`{{placeholders}}` per record and rasterizes the document as drawn. See
+[SVG labels as templates](svg-templates.md).
+
 ## Choosing SVG, JSON, or PDF
 
 Use SVG when individual labels should remain editable or be consumed by a

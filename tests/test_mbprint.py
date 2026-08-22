@@ -418,6 +418,171 @@ def test_svg_embeds_image_elements_as_self_contained_png():
     assert "xlink:href=" in content
 
 
+# --- SVG templates as layouts ----------------------------------------------
+
+SVG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="20mm" viewBox="0 0 240 160">
+  <title>Template label</title>
+  <text x="8" y="30" font-size="18">{{name}}</text>
+  <text x="8" y="120" font-size="12">{{ref}}[[ / {{batch}}]]</text>
+  <rect data-mb="qr" data-mb-data="{{qr}}" x="140" y="40" width="90" height="90"/>
+</svg>
+"""
+
+
+def _svg_label(tmp_path, source=SVG_TEMPLATE, name="label.svg"):
+    path = tmp_path / name
+    path.write_text(source, encoding="utf-8")
+    return layout.Label.load(path)
+
+
+def test_svg_label_reads_its_physical_size_title_and_placeholders(tmp_path):
+    label = _svg_label(tmp_path)
+    assert (label.width_mm, label.height_mm, label.dots_per_mm) == (30, 20, 8)
+    assert (label.width_px, label.height_px) == (240, 160)
+    assert label.name == "Template label"
+    assert label.svg_source is not None
+    assert label.placeholders() == ["name", "ref", "batch", "qr"]
+    # `batch` sits in an optional segment, so it is never a missing field.
+    assert label.missing_for({"name": "A", "ref": "R", "qr": "Q"}) == []
+    assert label.missing_for({"name": "A"}) == ["ref", "qr"]
+
+
+def test_svg_label_sizes_itself_from_a_viewbox_alone(tmp_path):
+    label = _svg_label(
+        tmp_path,
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 48"><text>{{a}}</text></svg>',
+    )
+    assert (round(label.width_mm, 2), round(label.height_mm, 2)) == (25.4, 12.7)
+    assert (label.width_px, label.height_px) == (96, 48)
+
+
+def test_svg_label_without_a_size_is_rejected(tmp_path):
+    with pytest.raises(SystemExit, match="needs a physical size"):
+        _svg_label(tmp_path, '<svg xmlns="http://www.w3.org/2000/svg"><text>{{a}}</text></svg>')
+
+
+def test_svg_template_substitution_escapes_values_and_builds_the_qr(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    from mbprint import svgtemplate
+
+    label = _svg_label(tmp_path)
+    filled = svgtemplate.substitute(
+        label.svg_source,
+        {"name": "Ben & Co <Ltd>", "ref": "AG-0001", "batch": "", "qr": "https://x.test/a&b"},
+    )
+    assert "Ben &amp; Co &lt;Ltd&gt;" in filled
+    assert ">AG-0001<" in filled  # the empty optional segment disappeared
+    assert "{{" not in filled and "data-mb" not in filled
+    root = ET.fromstring(filled)
+    assert root.find(f".//{{{svg.SVG_NS}}}path") is not None  # vector QR modules
+
+
+def test_svg_template_marker_needs_a_box(tmp_path):
+    from mbprint import svgtemplate
+
+    label = _svg_label(
+        tmp_path,
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 80 80">'
+        '<rect data-mb="qr" data-mb-data="{{qr}}"/></svg>',
+    )
+    with pytest.raises(SystemExit, match="needs x, y, width and height"):
+        svgtemplate.substitute(label.svg_source, {"qr": "Q"})
+
+
+def test_svg_template_renders_through_the_rasterizer_at_the_asked_scale(tmp_path, monkeypatch):
+    import io as _io
+
+    from mbprint import svgtemplate
+
+    captured = {}
+
+    def fake_backend(name, source, width, height, base):
+        captured.update(name=name, source=source, size=(width, height), base=base)
+        buffer = _io.BytesIO()
+        Image.new("RGB", (width, height), "white").save(buffer, "PNG")
+        return buffer.getvalue()
+
+    monkeypatch.setattr(svgtemplate, "_run_backend", fake_backend)
+    label = _svg_label(tmp_path)
+    image = layout.render(label, {"name": "A", "ref": "R", "qr": "Q"}, scale=2)
+    assert image.size == (480, 320)
+    assert captured["size"] == (480, 320)
+    assert captured["base"] == tmp_path
+    assert ">A<" in captured["source"]
+
+
+def test_svg_template_render_explains_a_missing_rasterizer(tmp_path, monkeypatch):
+    from mbprint import svgtemplate
+
+    monkeypatch.setattr(svgtemplate, "_cairosvg", lambda *a, **k: None)
+    monkeypatch.setattr(svgtemplate.shutil, "which", lambda name: None)
+    label = _svg_label(tmp_path)
+    with pytest.raises(SystemExit, match="needs an SVG renderer"):
+        layout.render(label, {"name": "A", "ref": "R", "qr": "Q"})
+
+
+def test_svg_template_barcode_marker_becomes_embedded_artwork(tmp_path):
+    pytest.importorskip("barcode")
+    from mbprint import svgtemplate
+
+    label = _svg_label(
+        tmp_path,
+        '<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="20mm" '
+        'viewBox="0 0 320 160"><rect data-mb="barcode" data-mb-data="{{sku}}" '
+        'data-mb-symbology="code128" x="20" y="60" width="280" height="80"/></svg>',
+    )
+    filled = svgtemplate.substitute(label.svg_source, {"sku": "AG-EX-0001"})
+    assert "data:image/png;base64," in filled
+    assert "data-mb" not in filled
+    # An empty value drops the element instead of drawing an empty box.
+    assert "image" not in svgtemplate.substitute(label.svg_source, {"sku": ""})
+
+
+def test_svg_label_prints_through_the_cli(tmp_path, monkeypatch):
+    import io as _io
+
+    from mbprint import cli, svgtemplate
+
+    def fake_backend(name, source, width, height, base):
+        buffer = _io.BytesIO()
+        Image.new("RGB", (width, height), "white").save(buffer, "PNG")
+        return buffer.getvalue()
+
+    monkeypatch.setattr(svgtemplate, "_run_backend", fake_backend)
+    label_file = tmp_path / "label.svg"
+    label_file.write_text(SVG_TEMPLATE, encoding="utf-8")
+    csv_file = tmp_path / "records.csv"
+    csv_file.write_text("Name,Internal Reference\nAlpha,AG-1\n", encoding="utf-8")
+    out = tmp_path / "preview"
+    assert (
+        cli.main(
+            [
+                "preview",
+                "-l",
+                str(label_file),
+                "-c",
+                str(csv_file),
+                "--data",
+                "qr=Q",
+                "-o",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert [path.name for path in out.glob("*.png")] == ["001-AG-1.png"]
+
+
+def test_svg_export_of_an_svg_label_fills_the_original_document(tmp_path):
+    label = _svg_label(tmp_path)
+    content = svg.render(label, {"name": "Alpha", "ref": "R1", "batch": "L7", "qr": "Q"})
+    assert 'width="30mm"' in content
+    assert ">Alpha<" in content
+    assert "R1 / L7" in content
+
+
 def test_pdf_page_selection_and_native_dpi_rendering(tmp_path):
     source = pdf.write_labels(
         [Image.new("RGB", (300, 200), "white"), Image.new("RGB", (300, 200), "black")],

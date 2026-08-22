@@ -85,7 +85,9 @@ def logging_parser() -> argparse.ArgumentParser:
 
 
 def add_source_options(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--label", "-l", default=None, help="label.json layout file")
+    p.add_argument(
+        "--label", "-l", default=None, help="layout file: label.json, or an SVG template"
+    )
     p.add_argument("--csv", "-c", default=None, help="CSV of records to print")
     p.add_argument(
         "--data",

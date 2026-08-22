@@ -55,6 +55,10 @@ mbprint config set data.qr "https://example.com/{{sku}}[[/{{batch}}]]"
 Config templates are evaluated first in definition order, followed by command
 line entries.
 
+Placeholders, filters, and optional segments work the same way in an SVG
+layout, in text and in attribute values. See
+[SVG labels as templates](svg-templates.md).
+
 ## Optional segments
 
 `[[...]]` marks a segment that disappears when every field inside it is empty:

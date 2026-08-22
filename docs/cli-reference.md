@@ -148,6 +148,11 @@ rotation, and clipping remain vectors. Images and barcodes are embedded PNG
 data. See [SVG export and import](svg-export.md) for fidelity, round-trip
 behavior, third-party SVG mapping, and naming details.
 
+An SVG file is also accepted as a layout: `-l label.svg` fills the document's
+`{{placeholders}}` per record and rasterizes it for `print`, `pdf`, and
+`preview`, which needs an SVG renderer (cairosvg, resvg, rsvg-convert, or
+inkscape). See [SVG labels as templates](svg-templates.md).
+
 ## Other commands
 
 ```text

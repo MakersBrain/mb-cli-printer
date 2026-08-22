@@ -118,6 +118,36 @@ mbprint pdf -l label.json -c inventory.csv --sheet a4 \
   --margin 10 --gap 2 -o sheets.pdf
 ```
 
+One supported exception is a PDF downloaded from La Poste's **Mon Timbre en
+Ligne** service. Pass the output format selected on its printing-options page:
+
+```sh
+# "Planche d'etiquettes autocollantes" -> 24 labels, 63.5 x 33.9 mm
+mbprint print-pdf Timbres.pdf --laposte-format L24A \
+  --model ql-1110nwb --media 62 --fit --transport usb
+
+# "Feuille blanche A4"
+mbprint print-pdf Timbres.pdf --laposte-format SHEET \
+  --model m110 --fit --transport usb
+```
+
+The accepted adhesive-sheet codes are `L24A`, `L24B`, `L21A`, `L18A`, `L16A`,
+`L14A`, and `L12A`. `SHEET` is an alias for La Poste's `L24A_SHEET` API code.
+Only occupied positions are emitted, including when the PDF starts part-way
+through a sheet. Every extracted postage mark retains its official
+63.5 x 33.9 mm dimensions before the normal printer/media fitting stage.
+
+To create a reusable PDF instead of printing immediately:
+
+```sh
+mbprint extract-pdf Timbres.pdf --laposte-format L24A \
+  --device M110-1234 -o Timbres-labels.pdf
+```
+
+The resulting PDF has one 63.5 x 33.9 mm stamp per page and can later be passed
+to `print-pdf` without `--laposte-format`. `--model` or `--device` selects the
+printer's native DPI; `--dpi` overrides it when supplied explicitly.
+
 ## Safe validation without printing
 
 Use a dry run to exercise PDF rendering, media fitting, protocol framing, and

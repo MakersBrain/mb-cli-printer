@@ -157,6 +157,7 @@ The complete generate-to-print workflow is in
 |---|---|
 | `print` | render records and send them to a printer |
 | `print-pdf` | rasterize and print one exact-size label per PDF page |
+| `extract-pdf` | split a La Poste A4 PDF into one exact-size stamp per page |
 | `pdf` | render records to a PDF |
 | `svg` | render one exact-size SVG file per label |
 | `import-svg` | convert SVG back to an editable `label.json` layout |

@@ -864,10 +864,24 @@ def _pdf_page_on_media(
     return mediamod.fit(image, media, printer.min_rows)
 
 
+def _fit_pdf_to_head(image: Image.Image, printer: printers.PrinterDef) -> Image.Image:
+    """Shrink a PDF raster to a non-Brother print head when --fit is explicit."""
+    current = image.height if printer.rotated else image.width
+    if current <= printer.width_px:
+        return image
+    scale = printer.width_px / current
+    return image.resize(
+        (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+        Image.Resampling.LANCZOS,
+    )
+
+
 def cmd_print_pdf(args: Args) -> int:
     """Rasterize an exact-size PDF and print each selected page as one label."""
     printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
     pages = pdf.render_pages(args.pdf_file, printer.dpi, args.pages)
+    if args.laposte_format:
+        pages = pdf.extract_la_poste_labels(pages, args.laposte_format)
     first = pages[0]
     for page in pages[1:]:
         if abs(page.width_mm - first.width_mm) > 0.5 or abs(page.height_mm - first.height_mm) > 0.5:
@@ -887,10 +901,17 @@ def cmd_print_pdf(args: Args) -> int:
         image = (
             _pdf_page_on_media(page, media, printer, args.fit) if media is not None else page.image
         )
+        if media is None and args.fit:
+            image = _fit_pdf_to_head(image, printer)
         raster = protocol.prepare_raster(image, printer, opts, dither)
         for copy in range(1, args.copies + 1):
             rasters.append(raster)
-            label_ids.append(f"page {page.number}" + (f" copy {copy}" if args.copies > 1 else ""))
+            label_id = f"page {page.number}"
+            if page.slot is not None:
+                label_id += f" slot {page.slot}"
+            if args.copies > 1:
+                label_id += f" copy {copy}"
+            label_ids.append(label_id)
     log.info(
         "PDF: %s, pages=%s, size=%.2fx%.2fmm at %ddpi",
         args.pdf_file,
@@ -900,6 +921,30 @@ def cmd_print_pdf(args: Args) -> int:
         printer.dpi,
     )
     return _send_rasters(args, printer, opts, rasters, label_ids, dither)
+
+
+def cmd_extract_pdf(args: Args) -> int:
+    """Convert a La Poste A4 sheet into one exact-size stamp per PDF page."""
+    dpi = args.dpi
+    if dpi is None and (args.model or args.device):
+        printer = printers.resolve(args.model, args.device)
+        dpi = printer.dpi
+        log.info("PDF raster: %s [%s] at %ddpi", printer.name, printer.id, printer.dpi)
+    dpi = dpi or 254
+    pages = pdf.render_pages(args.pdf_file, dpi, args.pages)
+    labels = pdf.extract_la_poste_labels(pages, args.laposte_format)
+    path = pdf.write_labels(
+        [label.image for label in labels],
+        args.out,
+        dots_per_mm=dpi / pdf.MM_PER_INCH,
+        title="La Poste - Mon Timbre en Ligne",
+        page_size_mm=(labels[0].width_mm, labels[0].height_mm),
+    )
+    print(
+        f"{path}  ({len(labels)} label{'s' if len(labels) != 1 else ''}, "
+        f"{labels[0].width_mm:g}x{labels[0].height_mm:g}mm)"
+    )
+    return 0
 
 
 def cmd_test(args: Args) -> int:
@@ -1299,9 +1344,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--pages", help="one-based pages and ranges, e.g. 1,3-5 (default all)")
     sp.add_argument("--copies", type=_positive_int, default=1, help="copies of each page")
     sp.add_argument(
+        "--laposte-format",
+        type=str.upper,
+        choices=sorted(pdf.LA_POSTE_FORMATS),
+        help="extract occupied Mon Timbre en Ligne stamps from this A4 output format",
+    )
+    sp.add_argument(
         "--fit",
         action="store_true",
-        help="allow a PDF page whose physical size differs from Brother media",
+        help="allow scaling to mismatched Brother media or a narrower print head",
     )
     sp.add_argument(
         "--dry-run",
@@ -1309,6 +1360,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="render and simulate printing; with --out, capture the printer bytes",
     )
     sp.set_defaults(func=cmd_print_pdf)
+
+    sp = sub.add_parser(
+        "extract-pdf",
+        help="convert a La Poste A4 PDF to one exact-size stamp per page",
+        parents=[common],
+    )
+    sp.add_argument("pdf_file", metavar="PDF", help="Mon Timbre en Ligne A4 PDF")
+    sp.add_argument(
+        "--laposte-format",
+        required=True,
+        type=str.upper,
+        choices=sorted(pdf.LA_POSTE_FORMATS),
+        help="format selected on La Poste's printing-options page",
+    )
+    sp.add_argument("--pages", help="one-based source pages and ranges, e.g. 1,3-5 (default all)")
+    sp.add_argument("--model", "-m", default=None, help="use this printer model's native DPI")
+    sp.add_argument("--device", default=None, help="device name used to detect a printer model")
+    sp.add_argument(
+        "--dpi",
+        type=_positive_int,
+        default=None,
+        help="output raster DPI (overrides --model/--device; default 254)",
+    )
+    sp.add_argument("--out", "-o", default="labels.pdf", help="output PDF (default labels.pdf)")
+    sp.set_defaults(func=cmd_extract_pdf)
 
     sp = sub.add_parser("pdf", help="render records to a PDF instead of printing", parents=[common])
     add_source_options(sp)

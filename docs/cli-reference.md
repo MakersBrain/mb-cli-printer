@@ -97,7 +97,8 @@ capture the bytes that would have been sent.
 ## Direct PDF printing
 
 ```text
-mbprint print-pdf PDF [--pages 1,3-5] [--copies N] [--fit] [printer options]
+mbprint print-pdf PDF [--pages 1,3-5] [--copies N] [--fit]
+                  [--laposte-format FORMAT] [printer options]
 ```
 
 Each selected PDF page is one label. Pages are rasterized at the selected
@@ -107,6 +108,25 @@ the same physical size. On Brother QL printers the page must match the loaded
 or selected DK media; a transposed page
 is rotated automatically. `--fit` explicitly permits scaling a mismatched page.
 `--dry-run --out job.bin` captures the resulting printer byte stream.
+
+La Poste's Mon Timbre en Ligne downloads are A4 sheets rather than one-label
+pages. `--laposte-format` extracts occupied stamps and prints them individually.
+It accepts `SHEET`/`L24A_SHEET` for *Feuille blanche A4*, plus the adhesive-sheet
+codes `L24A`, `L24B`, `L21A`, `L18A`, `L16A`, `L14A`, and `L12A`. Use the code
+selected on La Poste's **Options d'impression** page.
+
+## Extract La Poste labels to PDF
+
+```text
+mbprint extract-pdf PDF --laposte-format FORMAT [-o labels.pdf]
+                    [--pages 1,3-5] [--dpi N | --model ID | --device NAME]
+```
+
+This performs the same occupied-slot extraction without printing. The output
+contains one 63.5 x 33.9 mm stamp per PDF page. `--pages` selects source A4
+pages. `--model` or `--device` uses that printer's native DPI; an explicit
+`--dpi` takes precedence. The default is 254 DPI. Page dimensions remain exact
+at every resolution.
 
 ## PDF options
 

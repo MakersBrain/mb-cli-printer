@@ -19,11 +19,101 @@ PAGE_SIZES_MM = {
 
 
 @dataclass(frozen=True)
+class LaPosteFormat:
+    """Placement of fixed-size Mon Timbre en Ligne artwork on an A4 PDF."""
+
+    columns: int
+    rows: int
+    left_mm: float
+    top_mm: float
+    column_pitch_mm: float
+    row_pitch_mm: float
+    stamp_width_mm: float = 63.5
+    stamp_height_mm: float = 33.9
+
+
+# La Poste's format names and dimensions come from the printing-config endpoint.
+# The origins and pitches are measured from the service's own specimen PDFs. The
+# adhesive cell can be larger, but the postage artwork is always 63.5 x 33.9 mm.
+LA_POSTE_FORMATS: dict[str, LaPosteFormat] = {
+    "L24A": LaPosteFormat(3, 8, 7.2, 13.1, 66.0, 33.9),
+    "L24B": LaPosteFormat(3, 8, 5.0, 3.5, 68.25, 36.7),
+    "L21A": LaPosteFormat(3, 7, 7.2, 17.2, 66.0, 38.1),
+    "L18A": LaPosteFormat(3, 6, 7.2, 15.1, 66.0, 46.6),
+    "L16A": LaPosteFormat(2, 8, 22.5, 13.5, 101.6, 33.9),
+    "L14A": LaPosteFormat(2, 7, 22.5, 17.2, 101.6, 38.1),
+    "L12A": LaPosteFormat(2, 6, 22.5, 25.6, 101.6, 42.3),
+}
+# The "Feuille blanche A4" choice uses the same placement as L24A, with cut
+# guides. Accept both the API format code and the shorter UI category name.
+LA_POSTE_FORMATS["L24A_SHEET"] = LA_POSTE_FORMATS["L24A"]
+LA_POSTE_FORMATS["SHEET"] = LA_POSTE_FORMATS["L24A"]
+
+
+@dataclass(frozen=True)
 class RenderedPage:
     number: int
     width_mm: float
     height_mm: float
     image: Image.Image
+    slot: int | None = None
+
+
+def _has_ink(image: Image.Image) -> bool:
+    """Distinguish an occupied La Poste slot from unused white sheet stock."""
+    # Adjacent stamps share a crop edge in L24A. Ignore a small rim so the
+    # previous stamp's dashed cut line cannot make an empty slot look occupied.
+    inset = max(1, round(min(image.size) * 0.02))
+    interior = image.crop((inset, inset, image.width - inset, image.height - inset))
+    histogram = interior.convert("L").histogram()
+    nonwhite = sum(histogram[:250])
+    return nonwhite >= max(8, round(interior.width * interior.height * 0.001))
+
+
+def extract_la_poste_labels(pages: list[RenderedPage], format_code: str) -> list[RenderedPage]:
+    """Crop occupied Mon Timbre en Ligne stamps out of A4 sheet PDFs."""
+    code = format_code.upper()
+    try:
+        sheet = LA_POSTE_FORMATS[code]
+    except KeyError:
+        raise SystemExit(
+            f"unknown La Poste format {format_code!r}; use one of "
+            + ", ".join(sorted(LA_POSTE_FORMATS))
+        )
+
+    labels: list[RenderedPage] = []
+    for page in pages:
+        if abs(page.width_mm - 210.0) > 1.5 or abs(page.height_mm - 297.0) > 1.5:
+            raise SystemExit(
+                f"La Poste format {code} needs an A4 PDF; page {page.number} is "
+                f"{page.width_mm:.2f}x{page.height_mm:.2f}mm"
+            )
+        x_scale = page.image.width / page.width_mm
+        y_scale = page.image.height / page.height_mm
+        for slot in range(sheet.columns * sheet.rows):
+            column, row = slot % sheet.columns, slot // sheet.columns
+            left_mm = sheet.left_mm + column * sheet.column_pitch_mm
+            top_mm = sheet.top_mm + row * sheet.row_pitch_mm
+            box = (
+                round(left_mm * x_scale),
+                round(top_mm * y_scale),
+                round((left_mm + sheet.stamp_width_mm) * x_scale),
+                round((top_mm + sheet.stamp_height_mm) * y_scale),
+            )
+            image = page.image.crop(box)
+            if _has_ink(image):
+                labels.append(
+                    RenderedPage(
+                        number=page.number,
+                        width_mm=sheet.stamp_width_mm,
+                        height_mm=sheet.stamp_height_mm,
+                        image=image,
+                        slot=slot + 1,
+                    )
+                )
+    if not labels:
+        raise SystemExit(f"no stamps found in the selected {code} La Poste sheet PDF")
+    return labels
 
 
 def page_indices(spec: str | None, count: int) -> list[int]:
@@ -125,6 +215,7 @@ def write_labels(
     bilevel: bool = False,
     dither: str = "auto",
     title: str = "",
+    page_size_mm: tuple[float, float] | None = None,
 ) -> Path:
     """One page per label, page size exactly the label size."""
     if not images:
@@ -133,8 +224,36 @@ def write_labels(
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     dpi = _dpi(dots_per_mm)
+    save_size: dict[str, float | tuple[float, float]]
+    if page_size_mm is not None:
+        width_mm, height_mm = page_size_mm
+        if width_mm <= 0 or height_mm <= 0:
+            raise SystemExit("PDF page dimensions must be positive")
+        target = (
+            max(1, round(width_mm * dots_per_mm)),
+            max(1, round(height_mm * dots_per_mm)),
+        )
+        pages = [
+            image if image.size == target else image.resize(target, Image.Resampling.LANCZOS)
+            for image in pages
+        ]
+        # Pillow accepts independent X/Y resolutions. Deriving them from the
+        # rounded raster makes the PDF MediaBox exact at any requested DPI.
+        save_size = {
+            "dpi": (
+                target[0] * MM_PER_INCH / width_mm,
+                target[1] * MM_PER_INCH / height_mm,
+            )
+        }
+    else:
+        save_size = {"resolution": dpi}
     pages[0].save(
-        out, "PDF", resolution=dpi, save_all=True, append_images=pages[1:], title=title or None
+        out,
+        "PDF",
+        save_all=True,
+        append_images=pages[1:],
+        title=title or None,
+        **save_size,
     )
     return out
 

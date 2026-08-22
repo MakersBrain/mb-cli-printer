@@ -274,6 +274,20 @@ def test_pdf_page_is_exactly_the_label_size(tmp_path):
     assert b"/MediaBox [ 0 0 85.03937007874016 56.69291338582678 ]" in blob
 
 
+def test_pdf_explicit_page_size_is_exact_at_native_printer_dpi(tmp_path):
+    out = pdf.write_labels(
+        [Image.new("RGB", (750, 400), "white"), Image.new("RGB", (750, 401), "black")],
+        tmp_path / "sized.pdf",
+        dots_per_mm=300 / 25.4,
+        page_size_mm=(63.5, 33.9),
+    )
+    pages = pdf.render_pages(out, dpi=72)
+    assert [(round(page.width_mm, 3), round(page.height_mm, 3)) for page in pages] == [
+        (63.5, 33.9),
+        (63.5, 33.9),
+    ]
+
+
 def test_pdf_sheet_tiles_labels(tmp_path):
     out = pdf.write_sheet(
         [Image.new("RGB", (240, 160), "white")] * 5, tmp_path / "s.pdf", dots_per_mm=8, page="a4"
@@ -605,6 +619,68 @@ def test_pdf_page_range_parser_validates_and_deduplicates():
         pdf.page_indices("3-1", 5)
 
 
+def test_la_poste_formats_match_the_service_options():
+    expected = {
+        "L24A": (3, 8),
+        "L24B": (3, 8),
+        "L21A": (3, 7),
+        "L18A": (3, 6),
+        "L16A": (2, 8),
+        "L14A": (2, 7),
+        "L12A": (2, 6),
+    }
+    assert {
+        code: (item.columns, item.rows)
+        for code, item in pdf.LA_POSTE_FORMATS.items()
+        if code in expected
+    } == expected
+    assert pdf.LA_POSTE_FORMATS["SHEET"] is pdf.LA_POSTE_FORMATS["L24A"]
+    assert pdf.LA_POSTE_FORMATS["L24A_SHEET"] is pdf.LA_POSTE_FORMATS["L24A"]
+
+
+def test_la_poste_sheet_extraction_keeps_only_occupied_slots():
+    item = pdf.LA_POSTE_FORMATS["L14A"]
+    image = Image.new("RGB", (2100, 2970), "white")
+    draw = ImageDraw.Draw(image)
+    for slot in (1, 14):
+        index = slot - 1
+        column, row = index % item.columns, index // item.columns
+        x = round((item.left_mm + column * item.column_pitch_mm) * 10)
+        y = round((item.top_mm + row * item.row_pitch_mm) * 10)
+        draw.rectangle((x + 20, y + 20, x + 200, y + 120), fill="black")
+    source = pdf.RenderedPage(3, 210, 297, image)
+
+    labels = pdf.extract_la_poste_labels([source], "l14a")
+
+    assert [(label.number, label.slot) for label in labels] == [(3, 1), (3, 14)]
+    assert all((label.width_mm, label.height_mm) == (63.5, 33.9) for label in labels)
+    assert all(label.image.size == (635, 339) for label in labels)
+
+
+def test_la_poste_sheet_extraction_requires_a4_and_ink():
+    with pytest.raises(SystemExit, match="needs an A4 PDF"):
+        pdf.extract_la_poste_labels(
+            [pdf.RenderedPage(2, 100, 150, Image.new("RGB", (1000, 1500), "white"))], "L24A"
+        )
+    with pytest.raises(SystemExit, match="no stamps found"):
+        pdf.extract_la_poste_labels(
+            [pdf.RenderedPage(1, 210, 297, Image.new("RGB", (2100, 2970), "white"))],
+            "SHEET",
+        )
+
+
+def test_pdf_fit_shrinks_to_a_non_brother_head():
+    from mbprint import cli
+
+    printer = printers.by_id("m110")
+    fitted = cli._fit_pdf_to_head(Image.new("RGB", (800, 400), "white"), printer)
+    assert fitted.size == (printer.width_px, printer.width_px // 2)
+    assert cli._fit_pdf_to_head(Image.new("RGB", (200, 100), "white"), printer).size == (
+        200,
+        100,
+    )
+
+
 def test_print_pdf_dry_run_uses_existing_brother_pipeline(tmp_path):
     from mbprint import cli
 
@@ -674,6 +750,79 @@ def test_print_pdf_parser_accepts_pages_and_copies():
     assert args.pdf_file == "labels.pdf"
     assert args.pages == "2-4"
     assert args.copies == 3
+
+    args = cli.build_parser().parse_args(
+        ["print-pdf", "timbres.pdf", "--laposte-format", "l24a_sheet"]
+    )
+    assert args.laposte_format == "L24A_SHEET"
+
+
+def test_extract_pdf_writes_one_exact_size_page_per_stamp(tmp_path, monkeypatch, capsys):
+    from mbprint import cli
+
+    source_page = pdf.RenderedPage(1, 210, 297, Image.new("RGB", (2100, 2970), "white"))
+    labels = [
+        pdf.RenderedPage(1, 63.5, 33.9, Image.new("RGB", (750, 400), "white"), slot=2),
+        pdf.RenderedPage(1, 63.5, 33.9, Image.new("RGB", (750, 400), "black"), slot=3),
+    ]
+    captured = {}
+
+    def render_pages(path, dpi, pages):
+        captured["render_dpi"] = dpi
+        return [source_page]
+
+    monkeypatch.setattr(pdf, "render_pages", render_pages)
+    monkeypatch.setattr(pdf, "extract_la_poste_labels", lambda pages, code: labels)
+
+    def write_labels(images, out_path, **kwargs):
+        captured.update(images=images, out_path=out_path, kwargs=kwargs)
+        return tmp_path / "split.pdf"
+
+    monkeypatch.setattr(pdf, "write_labels", write_labels)
+    result = cli.main(
+        [
+            "extract-pdf",
+            "Timbres.pdf",
+            "--laposte-format",
+            "l24a",
+            "--dpi",
+            "300",
+            "--device",
+            "M110-1234",
+            "-o",
+            str(tmp_path / "labels.pdf"),
+        ]
+    )
+
+    assert result == 0
+    assert captured["images"] == [label.image for label in labels]
+    assert captured["out_path"] == str(tmp_path / "labels.pdf")
+    assert captured["render_dpi"] == 300
+    assert captured["kwargs"]["dots_per_mm"] == pytest.approx(300 / 25.4)
+    assert captured["kwargs"]["page_size_mm"] == (63.5, 33.9)
+    assert "2 labels, 63.5x33.9mm" in capsys.readouterr().out
+
+    assert (
+        cli.main(
+            [
+                "extract-pdf",
+                "Timbres.pdf",
+                "--laposte-format",
+                "L24A",
+                "--device",
+                "M110-1234",
+            ]
+        )
+        == 0
+    )
+    assert captured["render_dpi"] == 203
+    assert captured["kwargs"]["dots_per_mm"] == pytest.approx(203 / 25.4)
+
+    args = cli.build_parser().parse_args(
+        ["extract-pdf", "Timbres.pdf", "--laposte-format", "SHEET"]
+    )
+    assert args.dpi is None
+    assert args.out == "labels.pdf"
 
 
 def test_print_pdf_validates_brother_media_and_rotates_transposed_page():

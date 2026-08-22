@@ -30,6 +30,7 @@ uv run mypy
 mbprint/
   cli.py           argparse front end and command orchestration
   layout.py        label loader, Pillow renderer, placeholder substitution
+  fonts/           redistributable application-wide font bundle
   data.py          CSV loading, mapping, derived fields, record selection
   raster.py        halftoning, packing, rotation, and head fitting
   protocol.py      printer command builders and print flows
@@ -44,6 +45,11 @@ mbprint/
   ui.py            terminal detection and progress reporters
   ipp.py           minimal IPP client for Brother media status
   transport/       BLE, Bluetooth, TCP, serial, USB, and file transports
+packages/
+  mbprint-fonts-dejavu/  optional font wheel discovered by entry point
+  mbprint-fonts-phomymo/ Phomymo's ten redistributable web-font families
+  mbprint-fonts-nerd/    optional JetBrainsMono Nerd Font wheel
+  mbprint-fonts-compatible/ free substitutes for proprietary families
 ```
 
 The main print pipeline is:

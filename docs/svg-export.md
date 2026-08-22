@@ -43,11 +43,11 @@ definitions.
   SVG. Their brightness, contrast, sizing, and human-readable barcode text
   follow the existing Pillow renderer.
 
-SVG font rendering ultimately uses the fonts available in the viewer. The
-export chooses compatible generic families (`sans-serif`, `serif`, or
-`monospace`), but line metrics can vary slightly between applications. Convert
-text to paths in a design tool when exact cross-machine font outlines are more
-important than editable text.
+Before export, `mbprint` requires the exact `label.json` font family and style
+so wrapping is measured predictably. The SVG keeps that family name, but final
+display still uses fonts available in the viewer. Ship the same font with the
+consumer or convert text to paths in a design tool when exact cross-machine
+outlines are more important than editable text.
 
 ## Import SVG to label.json
 

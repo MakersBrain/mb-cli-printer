@@ -15,7 +15,8 @@ The project uses [uv](https://docs.astral.sh/uv/):
 ```sh
 uv sync --no-dev                    # runtime dependencies
 uv sync --no-dev --extra tui        # + colored logs and live progress bars
-uv sync --no-dev --all-extras       # + USB and barcode support
+uv sync --no-dev --extra fonts      # + every maintained font bundle
+uv sync --no-dev --all-extras       # + all transports, renderers, and fonts
 ```
 
 Optional extras are off by default:
@@ -25,6 +26,46 @@ Optional extras are off by default:
 | `tui` | `rich` | colored logs and live progress bars |
 | `usb` | `pyusb` | `--transport usb` |
 | `barcode` | `python-barcode` | barcode elements in layouts |
+| `fonts` | all four font wheels | DejaVu, Phomymo, Nerd, and compatible fonts |
+| `fonts-dejavu` | DejaVu Sans/Serif/Mono | only the compact core bundle |
+| `fonts-phomymo` | ten open web-font families | Phomymo `label.json` fonts |
+| `fonts-nerd` | JetBrainsMono Nerd Font | Nerd Font text and symbols |
+| `fonts-compatible` | free substitutes | optional proprietary-font aliases |
+
+### Install all fonts
+
+For a runtime installation containing every maintained font:
+
+```sh
+uv sync --no-dev --extra fonts
+```
+
+For development, keep the test dependencies too:
+
+```sh
+uv sync --extra fonts
+```
+
+Installed font wheels are discovered automatically. No `--font-dir` or system
+font installation is required for their families. The aggregate includes:
+
+- DejaVu Sans, Serif, and Sans Mono;
+- Inter, Roboto, Open Sans, Lato, Montserrat, Oswald, Playfair Display,
+  Merriweather, Roboto Mono, and Source Code Pro;
+- JetBrainsMono Nerd Font;
+- Liberation Sans/Serif/Mono, Gelasio, Anton, and Comic Neue.
+
+Exact font matching remains the default. Free aliases for unavailable Arial,
+Helvetica, Georgia, Times New Roman, Courier New, Impact, and Comic Sans MS
+are used only when `--font-fallback` is present:
+
+```sh
+mbprint pdf -l label.json --font-fallback -o labels.pdf
+mbprint print -l label.json --font-fallback --model m110
+```
+
+See [Fonts in label.json](docs/data-and-templates.md#fonts-in-labeljson) for
+the mappings, individual installation extras, and custom font directories.
 
 Run the command through uv:
 
@@ -187,12 +228,14 @@ mbprint config set model m110
 mbprint config set align right
 mbprint config set offset_x 6
 mbprint config set density 7
+mbprint config set font_fallback true
 mbprint config set data.brand "Example Ceramics"
 mbprint config list
 ```
 
 The configuration is one active set of defaults, not a collection of per-model
-profiles. Command-line values override it.
+profiles. Command-line values override it. For example,
+`--no-font-fallback` temporarily disables a configured `font_fallback = true`.
 
 ## Troubleshooting
 

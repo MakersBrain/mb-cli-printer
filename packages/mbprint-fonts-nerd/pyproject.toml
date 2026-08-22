@@ -1,0 +1,19 @@
+[project]
+name = "mbprint-fonts-nerd"
+version = "0.1.0"
+description = "JetBrainsMono Nerd Font bundle for mb-cli-printer"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+
+[project.entry-points."mbprint.font_bundles"]
+nerd = "mbprint_fonts_nerd:font_directory"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mbprint_fonts_nerd"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/mbprint_fonts_nerd", "README.md", "LICENSE", "SOURCES.md"]

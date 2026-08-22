@@ -59,6 +59,106 @@ Placeholders, filters, and optional segments work the same way in an SVG
 layout, in text and in attribute values. See
 [SVG labels as templates](svg-templates.md).
 
+## Fonts in label.json
+
+`fontFamily` (or the compact `font` key) is resolved as an exact installed or
+bundled family. Rendering stops when that family and requested bold/italic face
+is unavailable; this prevents silent changes to wrapping and alignment.
+
+Portable label bundles can keep font files beside the label:
+
+```text
+product-label/
+  label.json
+  fonts/
+    ExampleSans-Regular.ttf
+    ExampleSans-Bold.ttf
+```
+
+The `fonts/` directory is scanned recursively for `.ttf`, `.otf`, and `.ttc`
+files. The same files can be shipped application-wide under `mbprint/fonts/`,
+or supplied from repeatable `--font-dir PATH` options. `MBPRINT_FONT_DIR`
+accepts the platform path separator for configured directories.
+
+Install every maintained redistributable font add-on for a runtime checkout
+with:
+
+```console
+uv sync --no-dev --extra fonts
+```
+
+Developers should omit `--no-dev` so the test and lint dependencies remain
+installed:
+
+```console
+uv sync --extra fonts
+```
+
+The `fonts` extra installs the DejaVu, Phomymo, Nerd, and compatible-font
+wheels together. Installation registers all four automatically; labels do not
+need `--font-dir` to find them.
+
+Separately distributed font wheels can advertise one or more directories
+through the `mbprint.font_bundles` entry point;
+`packages/mbprint-fonts-dejavu` is a packaging example.
+
+Smaller installations can select one bundle:
+
+```console
+uv sync --extra fonts-dejavu
+uv sync --extra fonts-phomymo
+uv sync --extra fonts-nerd
+uv sync --extra fonts-compatible
+```
+
+The Phomymo bundle contains Inter, Roboto, Open Sans, Lato, Montserrat,
+Oswald, Playfair Display, Merriweather, Roboto Mono, and Source Code Pro. CSS
+family stacks exported by Phomymo, such as `Inter, sans-serif`, resolve their
+primary family exactly. Its proprietary OS-font choices (Arial, Helvetica,
+Georgia, Times New Roman, Courier New, Impact, and Comic Sans MS) work when
+installed locally but are not redistributed. The compatible-font add-on
+provides these explicit `--font-fallback` mappings:
+
+| Missing requested family | Free substitute |
+|---|---|
+| Arial or Helvetica | Liberation Sans |
+| Georgia | Gelasio |
+| Times New Roman | Liberation Serif |
+| Courier New | Liberation Mono |
+| Impact | Anton |
+| Comic Sans MS | Comic Neue |
+
+Liberation is metric-compatible with Arial, Times New Roman, and Courier New.
+The remaining mappings are visually similar rather than metric-compatible.
+Strict mode never applies these aliases.
+
+The Nerd bundle contains JetBrainsMono Nerd Font in its four common styles.
+Any other Nerd Font can be installed through another add-on or supplied using
+the normal adjacent `fonts/`, `--font-dir`, or `MBPRINT_FONT_DIR` mechanisms.
+
+Include every style used by the layout. If a label requests bold, having only
+the regular face is an error. Font licenses must permit redistribution when
+files are committed or packaged.
+
+Use `--font-fallback` only when substitution is intentional:
+
+```sh
+mbprint pdf -l product-label/label.json --font-fallback -o labels.pdf
+```
+
+To make that policy persistent for `print`, `pdf`, `svg`, and `preview`:
+
+```sh
+mbprint config set font_fallback true
+```
+
+Use `--no-font-fallback` on an individual command to restore strict matching,
+or `mbprint config unset font_fallback` to remove the default.
+
+With that flag, a missing proprietary family first uses its compatible mapping
+above. Other missing families use a matching generic sans-serif, serif, or
+monospace font. Every substitution emits a warning.
+
 ## Optional segments
 
 `[[...]]` marks a segment that disappears when every field inside it is empty:

@@ -1,0 +1,19 @@
+[project]
+name = "mbprint-fonts-phomymo"
+version = "0.1.0"
+description = "Open fonts used by the Phomymo label designer for mb-cli-printer"
+requires-python = ">=3.10"
+license = "OFL-1.1"
+
+[project.entry-points."mbprint.font_bundles"]
+phomymo = "mbprint_fonts_phomymo:font_directory"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mbprint_fonts_phomymo"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/mbprint_fonts_phomymo", "README.md", "SOURCES.md"]

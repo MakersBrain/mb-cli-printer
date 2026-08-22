@@ -50,6 +50,16 @@ than applying filter, limit, or copy selection.
 |---|---|
 | `--dither MODE` | `auto`, `none`, `threshold`, `floyd-steinberg`, `atkinson`, or `ordered` |
 
+`print`, `pdf`, `svg`, and `preview` additionally accept:
+
+| Option | Meaning |
+|---|---|
+| `--font-dir PATH` | search a bundled font directory; repeatable |
+| `--font-fallback`, `--no-font-fallback` | allow substitution, or override its configured default |
+
+Missing `label.json` font families or styles are errors by default. A `fonts/`
+directory beside the label is discovered automatically.
+
 ## Printer and media options
 
 These are accepted by `print`, `print-pdf`, `status`, and `test` unless noted
@@ -193,7 +203,8 @@ mbprint usb-report [--json] [--out PATH] [--usb-serial SERIAL | --usb-bus N --us
 
 Supported scalar config keys are `model`, `transport`, `address`, `device`,
 `density`, `feed`, `speed`, `offset_x`, `offset_y`, `align`, `dither`,
-`continuous`, `gap_mm`, `tspl_offset_mm`, `label`, `media`, and `host`.
+`continuous`, `gap_mm`, `tspl_offset_mm`, `label`, `media`, `host`, and
+`font_fallback`.
 Derived templates use `data.<field>` keys.
 
 `import-svg` converts an SVG document to an editable JSON layout. The `-o` path

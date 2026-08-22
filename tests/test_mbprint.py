@@ -1,10 +1,11 @@
 """Unit tests: templating, record building, raster maths and protocol framing."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from mbprint import brother, data, layout, pdf, printers, protocol, svg, wireless
 from mbprint import raster as R
@@ -41,6 +42,184 @@ def test_optional_segment_drops_when_field_empty():
 
 def test_unknown_placeholder_is_left_visible():
     assert layout.substitute("{{nope}}", {}) == "{{nope}}"
+
+
+def test_missing_exact_font_fails_unless_fallback_is_explicit():
+    label = layout.Label(
+        width_mm=30,
+        height_mm=20,
+        elements=[
+            {
+                "type": "text",
+                "x": 0,
+                "y": 0,
+                "width": 200,
+                "height": 40,
+                "text": "hello",
+                "fontFamily": "Definitely Missing MBPrint Font",
+            }
+        ],
+    )
+    try:
+        layout.configure_fonts(allow_fallback=False)
+        with pytest.raises(SystemExit, match="--font-fallback"):
+            layout.render(label)
+
+        layout.configure_fonts(allow_fallback=True)
+        assert layout.render(label).size == (240, 160)
+    finally:
+        layout.configure_fonts()
+
+
+def test_font_bundle_resolves_an_exact_family_without_fontconfig(tmp_path, monkeypatch):
+    system_path = layout._fontconfig_path("sans-serif", False, False, exact=False)
+    assert system_path is not None
+    system_font = ImageFont.truetype(system_path, 12)
+    family, _style = system_font.getname()
+    bundle = tmp_path / "fonts"
+    bundle.mkdir()
+    bundled_font = bundle / "portable-font.ttf"
+    bundled_font.write_bytes(Path(system_path).read_bytes())
+    monkeypatch.setattr(layout, "_fontconfig_path", lambda *args, **kwargs: None)
+
+    try:
+        layout.configure_fonts(source=tmp_path / "label.json")
+        assert layout._font_path(str(family), False, False) == str(bundled_font)
+    finally:
+        layout.configure_fonts()
+
+
+def test_installed_font_addon_is_discovered(tmp_path, monkeypatch):
+    bundle = tmp_path / "addon-fonts"
+    bundle.mkdir()
+
+    class FakeEntryPoint:
+        name = "test-fonts"
+
+        @staticmethod
+        def load():
+            return lambda: bundle
+
+    class FakeEntryPoints:
+        @staticmethod
+        def select(**kwargs):
+            assert kwargs == {"group": "mbprint.font_bundles"}
+            return [FakeEntryPoint()]
+
+    with monkeypatch.context() as context:
+        context.setattr(layout.metadata, "entry_points", lambda: FakeEntryPoints())
+        layout._installed_font_bundle_dirs.cache_clear()
+        layout.configure_fonts()
+        assert bundle.resolve() in layout._FONT_SEARCH_DIRS
+
+    layout._installed_font_bundle_dirs.cache_clear()
+    layout.configure_fonts()
+
+
+def test_phomymo_css_font_stack_uses_exact_primary_family():
+    family, bold, italic, underline = layout._norm_text_style(
+        {
+            "fontFamily": '"Open Sans", sans-serif',
+            "fontWeight": "700",
+            "fontStyle": "italic",
+        }
+    )
+    assert (family, bold, italic, underline) == ("Open Sans", True, True, False)
+
+
+def test_variable_font_exposes_regular_and_bold_faces(tmp_path):
+    system_path = layout._fontconfig_path("Inter", False, False, exact=True)
+    if system_path is None:
+        pytest.skip("an installed variable font is required")
+    font = ImageFont.truetype(system_path, 12)
+    try:
+        names = font.get_variation_names()
+    except OSError:
+        pytest.skip("an installed variable font is required")
+    if b"Regular" not in names or b"Bold" not in names:
+        pytest.skip("an installed variable font with Regular and Bold instances is required")
+    bundle = tmp_path / "fonts"
+    bundle.mkdir()
+    bundled_font = bundle / "variable.ttf"
+    bundled_font.write_bytes(Path(system_path).read_bytes())
+
+    try:
+        layout.configure_fonts(font_dirs=[str(bundle)])
+        family = font.getname()[0]
+        assert layout._font_path(family, False, False) == str(bundled_font)
+        assert layout._font_path(family, True, False) == str(bundled_font)
+        assert layout._load_font(family, True, False, 12).getname()[1] == "Bold"
+    finally:
+        layout.configure_fonts()
+
+
+def test_optional_addons_cover_phomymo_and_nerd_font_families():
+    root = Path(__file__).resolve().parents[1]
+    phomymo = root / "packages/mbprint-fonts-phomymo/src/mbprint_fonts_phomymo/fonts"
+    nerd = root / "packages/mbprint-fonts-nerd/src/mbprint_fonts_nerd/fonts"
+    all_styles = ((False, False), (True, False), (False, True), (True, True))
+    families = (
+        "Inter",
+        "Roboto",
+        "Open Sans",
+        "Lato",
+        "Montserrat",
+        "Playfair Display",
+        "Merriweather",
+        "Roboto Mono",
+        "Source Code Pro",
+        "JetBrainsMono Nerd Font",
+    )
+
+    try:
+        layout.configure_fonts(font_dirs=[str(phomymo), str(nerd)])
+        for family in families:
+            assert all(layout._font_path(family, bold, italic) for bold, italic in all_styles)
+        assert layout._font_path("Oswald", False, False)
+        assert layout._font_path("Oswald", True, False)
+        assert layout._font_path("Oswald", False, True) is None
+    finally:
+        layout.configure_fonts()
+
+
+def test_compatible_addon_substitutes_proprietary_fonts_only_with_fallback(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    compatible = root / "packages/mbprint-fonts-compatible/src/mbprint_fonts_compatible/fonts"
+    expected = {
+        "Arial": "Liberation Sans",
+        "Helvetica": "Liberation Sans",
+        "Georgia": "Gelasio",
+        "Times New Roman": "Liberation Serif",
+        "Courier New": "Liberation Mono",
+        "Impact": "Anton",
+        "Comic Sans MS": "Comic Neue",
+    }
+
+    with monkeypatch.context() as context:
+        context.setattr(layout, "_fontconfig_path", lambda *args, **kwargs: None)
+        layout.configure_fonts(font_dirs=[str(compatible)], allow_fallback=False)
+        with pytest.raises(SystemExit, match="--font-fallback"):
+            layout._load_font("Arial", False, False, 12)
+
+        layout.configure_fonts(font_dirs=[str(compatible)], allow_fallback=True)
+        for requested, replacement in expected.items():
+            assert layout._load_font(requested, False, False, 12).getname()[0] == replacement
+
+    layout.configure_fonts()
+
+
+def test_label_render_commands_accept_font_policy_options():
+    from mbprint import cli
+
+    for command in ("print", "pdf", "svg", "preview"):
+        args = cli.build_parser().parse_args(
+            [command, "--font-dir", "fonts-a", "--font-dir", "fonts-b", "--font-fallback"]
+        )
+        assert args.font_dir == ["fonts-a", "fonts-b"]
+        assert args.font_fallback is True
+
+        args = cli.build_parser().parse_args([command, "--no-font-fallback"])
+        assert args.font_fallback is False
 
 
 def test_price_short_drops_zero_cents():
@@ -1086,10 +1265,12 @@ def test_config_data_table_keeps_definition_order(tmp_path, monkeypatch):
     cfgmod.set_key(stored, "data.brand", "Ceramics")
     cfgmod.set_key(stored, "data.qr", "https://x/{{brand}}")
     cfgmod.set_key(stored, "density", "7")
+    cfgmod.set_key(stored, "font_fallback", "true")
     cfgmod.save(stored)
 
     loaded = cfgmod.load()
     assert loaded["density"] == 7
+    assert loaded["font_fallback"] is True
     assert cfgmod.data_templates(loaded) == [
         ("brand", "Ceramics"),
         ("qr", "https://x/{{brand}}"),
@@ -1097,6 +1278,23 @@ def test_config_data_table_keeps_definition_order(tmp_path, monkeypatch):
     assert cfgmod.flatten(loaded)["data.qr"] == "https://x/{{brand}}"
     cfgmod.unset_key(loaded, "data.brand")
     assert cfgmod.data_templates(loaded) == [("qr", "https://x/{{brand}}")]
+
+
+def test_configured_font_fallback_can_be_overridden(monkeypatch):
+    from mbprint import cli
+
+    label = layout.Label(width_mm=30, height_mm=20)
+    seen: list[bool] = []
+    monkeypatch.setattr(cli.cfg, "load", lambda: {"font_fallback": True})
+    monkeypatch.setattr(
+        layout,
+        "configure_fonts",
+        lambda **kwargs: seen.append(bool(kwargs["allow_fallback"])),
+    )
+
+    cli._configure_label_fonts(SimpleNamespace(font_fallback=None, font_dir=None), label)
+    cli._configure_label_fonts(SimpleNamespace(font_fallback=False, font_dir=None), label)
+    assert seen == [True, False]
 
 
 def test_unknown_config_key_mentions_the_data_table():

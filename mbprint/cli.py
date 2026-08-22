@@ -154,6 +154,21 @@ def add_render_options(p: argparse.ArgumentParser) -> None:
     )
 
 
+def add_font_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--font-dir",
+        action="append",
+        metavar="PATH",
+        help="directory containing bundled .ttf/.otf fonts (repeatable)",
+    )
+    p.add_argument(
+        "--font-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="allow font substitution (or disable a configured default with --no-font-fallback)",
+    )
+
+
 def add_printer_options(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--model",
@@ -338,7 +353,7 @@ def _ask(question: str) -> bool:
         if console is not None:
             from rich.prompt import Confirm
 
-            return Confirm.ask(f"[yellow]{question}[/yellow]", default=False, console=console)
+            return bool(Confirm.ask(f"[yellow]{question}[/yellow]", default=False, console=console))
         return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
     except (EOFError, KeyboardInterrupt):
         return False
@@ -451,6 +466,14 @@ def _render_all(
     decimal: str = ",",
 ) -> list[Image.Image]:
     return [layout.render(label, record, scale=scale, decimal=decimal) for record in records]
+
+
+def _configure_label_fonts(args: Args, label: layout.Label) -> None:
+    layout.configure_fonts(
+        source=label.source,
+        font_dirs=getattr(args, "font_dir", None),
+        allow_fallback=bool(_pick(args, "font_fallback", False)),
+    )
 
 
 def _print_options(
@@ -629,6 +652,7 @@ def cmd_fields(args: Args) -> int:
 
 def cmd_preview(args: Args) -> int:
     label = _resolve_label(args)
+    _configure_label_fonts(args, label)
     records = _resolve_records(args)
     _check_missing(label, records, args)
     printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
@@ -668,6 +692,7 @@ def cmd_preview(args: Args) -> int:
 
 def cmd_pdf(args: Args) -> int:
     label = _resolve_label(args)
+    _configure_label_fonts(args, label)
     records = _resolve_records(args)
     _check_missing(label, records, args)
     model = _pick(args, "model", None)
@@ -717,6 +742,7 @@ def cmd_pdf(args: Args) -> int:
 def cmd_svg(args: Args) -> int:
     """Write one exact-size SVG file per expanded label record."""
     label = _resolve_label(args)
+    _configure_label_fonts(args, label)
     records = _resolve_records(args)
     _check_missing(label, records, args)
     destination = Path(args.out or "svg")
@@ -746,6 +772,7 @@ def cmd_import_svg(args: Args) -> int:
 
 def cmd_print(args: Args) -> int:
     label = _resolve_label(args)
+    _configure_label_fonts(args, label)
     records = _resolve_records(args)
     _check_missing(label, records, args)
     printer = printers.resolve(_pick(args, "model", None), _pick(args, "device", None))
@@ -1327,6 +1354,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("print", help="render records and print them", parents=[common])
     add_source_options(sp)
     add_render_options(sp)
+    add_font_options(sp)
     add_printer_options(sp)
     sp.add_argument(
         "--dry-run",
@@ -1383,6 +1411,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("pdf", help="render records to a PDF instead of printing", parents=[common])
     add_source_options(sp)
     add_render_options(sp)
+    add_font_options(sp)
     sp.add_argument("--model", "-m", default=None, help="render at this printer model's native DPI")
     sp.add_argument("--device", default=None, help="device name used to detect a printer model")
     sp.add_argument("--out", "-o", default="labels.pdf", help="output PDF path")
@@ -1412,6 +1441,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("svg", help="render records to exact-size SVG files", parents=[common])
     add_source_options(sp)
+    add_font_options(sp)
     sp.add_argument(
         "--out",
         "-o",
@@ -1430,6 +1460,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("preview", help="render records to PNG files", parents=[common])
     add_source_options(sp)
     add_render_options(sp)
+    add_font_options(sp)
     sp.add_argument("--model", "-m", default=None, help="printer model, for raster preview")
     sp.add_argument("--device", default=None, help="BLE device name, for model auto-detect")
     sp.add_argument("--align", default=None, choices=["left", "center", "right"])

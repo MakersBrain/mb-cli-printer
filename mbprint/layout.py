@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
+import csv
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -19,6 +22,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -60,6 +64,26 @@ _FONT_CANDIDATES = {
     "mono-bolditalic": ["DejaVuSansMono-BoldOblique.ttf", "LiberationMono-BoldItalic.ttf"],
 }
 _FC_QUERY = {"sans": "sans-serif", "serif": "serif", "mono": "monospace"}
+_GENERIC_FAMILIES = {
+    "sans": "sans",
+    "sans-serif": "sans",
+    "serif": "serif",
+    "mono": "mono",
+    "monospace": "mono",
+}
+_FREE_FONT_SUBSTITUTIONS = {
+    "arial": "Liberation Sans",
+    "helvetica": "Liberation Sans",
+    "georgia": "Gelasio",
+    "timesnewroman": "Liberation Serif",
+    "couriernew": "Liberation Mono",
+    "impact": "Anton",
+    "comicsansms": "Comic Neue",
+}
+_FONT_SUFFIXES = {".ttf", ".otf", ".ttc"}
+_FONT_SEARCH_DIRS: tuple[Path, ...] = ()
+_ALLOW_FONT_FALLBACK = False
+_FONT_BUNDLE_ENTRY_POINT = "mbprint.font_bundles"
 
 # Extra room around an element's box so unwrapped text can overflow like it
 # does on the HTML canvas.
@@ -77,8 +101,173 @@ def _family_of(name: str | None) -> str:
     return "sans"
 
 
+def _font_key(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _style_flags(style: str) -> tuple[bool, bool]:
+    value = style.casefold()
+    bold = any(word in value for word in ("bold", "semibold", "demibold", "black", "heavy"))
+    italic = "italic" in value or "oblique" in value
+    return bold, italic
+
+
+def _primary_font_family(value: str) -> str:
+    """Return the primary family from a CSS font-family stack."""
+    try:
+        names = next(csv.reader([value], skipinitialspace=True))
+    except (csv.Error, StopIteration):
+        names = [value]
+    family = (names[0] if names else value).strip().strip("'\"")
+    return family or "sans"
+
+
+def configure_fonts(
+    source: str | Path | None = None,
+    font_dirs: list[str] | None = None,
+    allow_fallback: bool = False,
+) -> None:
+    """Configure exact font lookup for one label-rendering command.
+
+    Explicit directories, ``MBPRINT_FONT_DIR``, a ``fonts`` directory beside
+    the label, installed font-bundle add-ons, and the package's own ``fonts``
+    directory form a portable font bundle search path, in that order.
+    """
+    global _ALLOW_FONT_FALLBACK, _FONT_SEARCH_DIRS
+
+    directories: list[Path] = []
+    explicit = [Path(path) for path in font_dirs or []]
+    env_dirs = [
+        Path(path) for path in os.environ.get("MBPRINT_FONT_DIR", "").split(os.pathsep) if path
+    ]
+    for directory in explicit + env_dirs:
+        if not directory.is_dir():
+            raise SystemExit(f"font directory not found: {directory}")
+        directories.append(directory.resolve())
+    if source is not None:
+        beside_label = Path(source).resolve().parent / "fonts"
+        if beside_label.is_dir():
+            directories.append(beside_label)
+    directories.extend(_installed_font_bundle_dirs())
+    packaged = Path(__file__).with_name("fonts")
+    if packaged.is_dir():
+        directories.append(packaged)
+
+    _FONT_SEARCH_DIRS = tuple(dict.fromkeys(directories))
+    _ALLOW_FONT_FALLBACK = allow_fallback
+    _bundled_faces.cache_clear()
+    _font_path.cache_clear()
+    _load_font.cache_clear()
+
+
+@lru_cache(maxsize=1)
+def _installed_font_bundle_dirs() -> tuple[Path, ...]:
+    """Load font directories advertised by optional Python packages."""
+    directories: list[Path] = []
+    entry_points = metadata.entry_points().select(group=_FONT_BUNDLE_ENTRY_POINT)
+
+    for entry_point in entry_points:
+        try:
+            provider = entry_point.load()
+            provided = provider() if callable(provider) else provider
+            values = [provided] if isinstance(provided, (str, os.PathLike)) else list(provided)
+            for value in values:
+                directory = Path(value).resolve()
+                if not directory.is_dir():
+                    log.warning(
+                        "font bundle %s returned a missing directory: %s",
+                        entry_point.name,
+                        directory,
+                    )
+                    continue
+                directories.append(directory)
+        except Exception as exc:  # add-ons must not prevent unrelated commands starting
+            log.warning("cannot load font bundle %s: %s", entry_point.name, exc)
+    return tuple(dict.fromkeys(directories))
+
+
+@lru_cache(maxsize=16)
+def _bundled_faces(
+    directories: tuple[Path, ...],
+) -> tuple[tuple[str, bool, bool, str], ...]:
+    faces: list[tuple[str, bool, bool, str]] = []
+    for directory in directories:
+        for path in sorted(
+            item for item in directory.rglob("*") if item.suffix.casefold() in _FONT_SUFFIXES
+        ):
+            try:
+                font = ImageFont.truetype(str(path), 12)
+                family, style = font.getname()
+            except OSError:
+                log.warning("cannot load bundled font %s", path)
+                continue
+            face_bold, face_italic = _style_flags(style or "")
+            variations: list[str] = []
+            # Not every face is a variable font, and Pillow only grows
+            # get_variation_names() when it was built against a FreeType with
+            # the variation API. Either way the face is still usable, just
+            # without named instances.
+            with contextlib.suppress(AttributeError, OSError):
+                variations = [name.decode(errors="replace") for name in font.get_variation_names()]
+            if variations:
+                for variation in variations:
+                    variation_bold, variation_italic = _style_flags(variation)
+                    faces.append(
+                        (
+                            _font_key(family or path.stem),
+                            variation_bold,
+                            face_italic or variation_italic,
+                            str(path),
+                        )
+                    )
+            else:
+                faces.append((_font_key(family or path.stem), face_bold, face_italic, str(path)))
+    return tuple(faces)
+
+
+def _fontconfig_path(family: str, bold: bool, italic: bool, exact: bool) -> str | None:
+    fc = shutil.which("fc-match")
+    if not fc:
+        return None
+    query = family
+    if bold:
+        query += ":weight=bold"
+    if italic:
+        query += ":slant=italic"
+    try:
+        output = subprocess.run(
+            [fc, "-f", "%{family}\t%{style}\t%{file}", query],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    try:
+        matched_family, style, filename = output.split("\t", 2)
+    except ValueError:
+        return None
+    if exact:
+        requested = _font_key(family)
+        names = {_font_key(name) for name in matched_family.split(",")}
+        if requested not in names:
+            return None
+        face_bold, face_italic = _style_flags(style)
+        if (face_bold, face_italic) != (bold, italic):
+            return None
+    return filename if filename and Path(filename).is_file() else None
+
+
 @lru_cache(maxsize=64)
 def _font_path(family: str, bold: bool, italic: bool) -> str | None:
+    generic = _GENERIC_FAMILIES.get(family.casefold())
+    if generic is None:
+        wanted = _font_key(family)
+        for face_family, face_bold, face_italic, path in _bundled_faces(_FONT_SEARCH_DIRS):
+            if face_family == wanted and (face_bold, face_italic) == (bold, italic):
+                return path
+        return _fontconfig_path(family, bold, italic, exact=True)
+
     suffix = ""
     if bold and italic:
         suffix = "-bolditalic"
@@ -86,41 +275,17 @@ def _font_path(family: str, bold: bool, italic: bool) -> str | None:
         suffix = "-bold"
     elif italic:
         suffix = "-italic"
-    for candidate in _FONT_CANDIDATES.get(family + suffix, []):
+    for candidate in _FONT_CANDIDATES.get(generic + suffix, []):
+        for directory in _FONT_SEARCH_DIRS:
+            bundled = directory / candidate
+            if bundled.is_file():
+                return str(bundled)
         try:
             ImageFont.truetype(candidate, 12)
             return candidate
         except OSError:
             pass
-    fc = shutil.which("fc-match")
-    if fc:
-        query = _FC_QUERY.get(family, "sans-serif")
-        if bold:
-            query += ":bold"
-        if italic:
-            query += ":italic"
-        try:
-            out = subprocess.run(
-                [fc, "-f", "%{file}", query], capture_output=True, text=True, timeout=5
-            ).stdout.strip()
-            if out and Path(out).exists():
-                return out
-        except (OSError, subprocess.SubprocessError):
-            pass
-    log.debug(
-        "no %s%s%s font found; trying the plain family",
-        family,
-        "-bold" if bold else "",
-        "-italic" if italic else "",
-    )
-    # Last resort: any of the plain candidates for this family.
-    for candidate in _FONT_CANDIDATES.get(family, []):
-        try:
-            ImageFont.truetype(candidate, 12)
-            return candidate
-        except OSError:
-            pass
-    return None
+    return _fontconfig_path(_FC_QUERY[generic], bold, italic, exact=False)
 
 
 @lru_cache(maxsize=512)
@@ -129,17 +294,53 @@ def _load_font(
 ) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     path = _font_path(family, bold, italic)
     if not path:
+        style = " ".join(part for part, enabled in (("bold", bold), ("italic", italic)) if enabled)
+        description = f"{family} {style}".strip()
+        if not _ALLOW_FONT_FALLBACK:
+            locations = ", ".join(str(path) for path in _FONT_SEARCH_DIRS) or "no font bundle"
+            raise SystemExit(
+                f"font {description!r} is not available ({locations}); install it, put its "
+                ".ttf/.otf file in a fonts/ directory beside the label, pass --font-dir, "
+                "or explicitly allow substitution with --font-fallback"
+            )
+        replacement = _FREE_FONT_SUBSTITUTIONS.get(_font_key(family))
+        if replacement:
+            path = _font_path(replacement, bold, italic)
+            if path:
+                log.warning("font %r is not available; substituting %s", description, replacement)
+                return _open_font(path, size, bold)
+        generic = _family_of(family)
+        path = _font_path(generic, bold, italic)
+        if path:
+            log.warning("font %r is not available; substituting %s", description, path)
+            return _open_font(path, size, bold)
         log.warning(
-            "no %s font on this system; falling back to the bitmap default, "
+            "no %s font on this system; using the bitmap default, "
             "which ignores the layout's font size",
-            family,
+            description,
         )
         return ImageFont.load_default()
     log.debug("font %s %dpx -> %s", family, size, path)
     try:
-        return ImageFont.truetype(path, max(1, size))
-    except OSError:
+        return _open_font(path, size, bold)
+    except OSError as exc:
+        if not _ALLOW_FONT_FALLBACK:
+            raise SystemExit(f"cannot load font {family!r} from {path}: {exc}")
+        log.warning("cannot load font %r from %s; using the bitmap default", family, path)
         return ImageFont.load_default()
+
+
+def _open_font(path: str, size: int, bold: bool) -> ImageFont.FreeTypeFont:
+    """Open a static face or select the requested named variable-font weight."""
+    font = ImageFont.truetype(path, max(1, size))
+    try:
+        names = font.get_variation_names()
+    except (AttributeError, OSError):
+        return font
+    wanted = b"Bold" if bold else b"Regular"
+    if wanted in names:
+        font.set_variation_by_name(wanted)
+    return font
 
 
 # --- template substitution -------------------------------------------------
@@ -386,8 +587,13 @@ class Label:
 def _norm_text_style(el: Element) -> tuple[str, bool, bool, bool]:
     """(family, bold, italic, underline), accepting both the compact export
     keys (font/bold/italic) and the full designer keys (fontFamily/fontWeight)."""
-    family = _family_of(el.get("fontFamily") or el.get("font"))
-    bold = bool(el.get("bold")) or el.get("fontWeight") == "bold"
+    family = _primary_font_family(str(el.get("fontFamily") or el.get("font") or "sans"))
+    weight = str(el.get("fontWeight") or "normal").casefold()
+    bold = (
+        bool(el.get("bold"))
+        or weight in {"bold", "bolder"}
+        or (weight.isdigit() and int(weight) >= 600)
+    )
     italic = bool(el.get("italic")) or el.get("fontStyle") == "italic"
     underline = bool(el.get("underline")) or el.get("textDecoration") == "underline"
     return family, bold, italic, underline

@@ -541,6 +541,24 @@ dependencies = [
 barcode = [
     { name = "python-barcode" },
 ]
+fonts = [
+    { name = "mbprint-fonts-compatible" },
+    { name = "mbprint-fonts-dejavu" },
+    { name = "mbprint-fonts-nerd" },
+    { name = "mbprint-fonts-phomymo" },
+]
+fonts-compatible = [
+    { name = "mbprint-fonts-compatible" },
+]
+fonts-dejavu = [
+    { name = "mbprint-fonts-dejavu" },
+]
+fonts-nerd = [
+    { name = "mbprint-fonts-nerd" },
+]
+fonts-phomymo = [
+    { name = "mbprint-fonts-phomymo" },
+]
 svg = [
     { name = "cairosvg" },
 ]
@@ -564,6 +582,14 @@ dev = [
 requires-dist = [
     { name = "bleak", specifier = ">=0.22" },
     { name = "cairosvg", marker = "extra == 'svg'", specifier = ">=2.7" },
+    { name = "mbprint-fonts-compatible", marker = "extra == 'fonts'", directory = "packages/mbprint-fonts-compatible" },
+    { name = "mbprint-fonts-compatible", marker = "extra == 'fonts-compatible'", directory = "packages/mbprint-fonts-compatible" },
+    { name = "mbprint-fonts-dejavu", marker = "extra == 'fonts'", directory = "packages/mbprint-fonts-dejavu" },
+    { name = "mbprint-fonts-dejavu", marker = "extra == 'fonts-dejavu'", directory = "packages/mbprint-fonts-dejavu" },
+    { name = "mbprint-fonts-nerd", marker = "extra == 'fonts'", directory = "packages/mbprint-fonts-nerd" },
+    { name = "mbprint-fonts-nerd", marker = "extra == 'fonts-nerd'", directory = "packages/mbprint-fonts-nerd" },
+    { name = "mbprint-fonts-phomymo", marker = "extra == 'fonts'", directory = "packages/mbprint-fonts-phomymo" },
+    { name = "mbprint-fonts-phomymo", marker = "extra == 'fonts-phomymo'", directory = "packages/mbprint-fonts-phomymo" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pypdfium2", specifier = ">=5.13.0" },
     { name = "pyserial", specifier = ">=3.5" },
@@ -572,7 +598,7 @@ requires-dist = [
     { name = "qrcode", specifier = ">=7.4" },
     { name = "rich", marker = "extra == 'tui'", specifier = ">=13.7" },
 ]
-provides-extras = ["tui", "usb", "barcode", "svg"]
+provides-extras = ["tui", "usb", "barcode", "fonts", "fonts-dejavu", "fonts-phomymo", "fonts-nerd", "fonts-compatible", "svg"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -582,6 +608,26 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.6" },
 ]
+
+[[package]]
+name = "mbprint-fonts-compatible"
+version = "0.1.0"
+source = { directory = "packages/mbprint-fonts-compatible" }
+
+[[package]]
+name = "mbprint-fonts-dejavu"
+version = "0.1.0"
+source = { directory = "packages/mbprint-fonts-dejavu" }
+
+[[package]]
+name = "mbprint-fonts-nerd"
+version = "0.1.0"
+source = { directory = "packages/mbprint-fonts-nerd" }
+
+[[package]]
+name = "mbprint-fonts-phomymo"
+version = "0.1.0"
+source = { directory = "packages/mbprint-fonts-phomymo" }
 
 [[package]]
 name = "mdurl"

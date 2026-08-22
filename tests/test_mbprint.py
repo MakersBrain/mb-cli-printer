@@ -153,7 +153,11 @@ def test_variable_font_exposes_regular_and_bold_faces(tmp_path):
         layout.configure_fonts()
 
 
-def test_optional_addons_cover_phomymo_and_nerd_font_families():
+def test_optional_addons_cover_phomymo_and_nerd_font_families(monkeypatch):
+    # No fc-match, so every hit below has to come out of the bundle. A
+    # developer machine with these families installed would otherwise resolve
+    # them through the host and hide a bundle that cannot answer for itself.
+    monkeypatch.setattr(layout.shutil, "which", lambda name: None)
     root = Path(__file__).resolve().parents[1]
     phomymo = root / "packages/mbprint-fonts-phomymo/src/mbprint_fonts_phomymo/fonts"
     nerd = root / "packages/mbprint-fonts-nerd/src/mbprint_fonts_nerd/fonts"
@@ -174,7 +178,12 @@ def test_optional_addons_cover_phomymo_and_nerd_font_families():
     try:
         layout.configure_fonts(font_dirs=[str(phomymo), str(nerd)])
         for family in families:
-            assert all(layout._font_path(family, bold, italic) for bold, italic in all_styles)
+            missing = [
+                (bold, italic)
+                for bold, italic in all_styles
+                if not layout._font_path(family, bold, italic)
+            ]
+            assert not missing, f"{family} is missing bold/italic styles {missing}"
         assert layout._font_path("Oswald", False, False)
         assert layout._font_path("Oswald", True, False)
         assert layout._font_path("Oswald", False, True) is None

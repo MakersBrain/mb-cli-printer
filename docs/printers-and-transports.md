@@ -139,6 +139,9 @@ Passing `--model` or `--device` renders at that printer's exact native DPI while
 keeping the physical PDF page size unchanged. An explicit `--scale` overrides
 the selected model's DPI.
 
+For direct PDF input, page ranges, copies, Brother media validation, and dry
+runs, see [PDF generation and direct printing](pdf-workflows.md).
+
 For PNG previews:
 
 - `--raster` applies model rotation, media fitting, head width, alignment,
@@ -177,6 +180,7 @@ mbprint print-pdf labels.pdf --model m110 -t usb
 status block to identify the roll. TCP printing uses IPP on port 631 for status
 because port 9100 does not return it. If no status is available, media is
 inferred from the layout dimensions.
+
 For `print-pdf`, it is inferred from the PDF page dimensions. A page-size
 mismatch is rejected before printing unless `--fit` is supplied explicitly.
 

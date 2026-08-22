@@ -9,11 +9,12 @@ Run the hardware-free suite with:
 uv run pytest tests -q
 ```
 
-The 85 tests cover templates, filters, optional segments, missing fields,
+The 108 tests cover templates, filters, optional segments, missing fields,
 column mapping, copies, raster packing, alignment, rotation, all protocol
-frames, MTU clamping, model detection, PDF geometry, config ordering, progress,
-logging, Brother streams compared with `brother_ql`, and a status block captured
-from a QL-1110NWB.
+frames, MTU clamping, model detection, exact-DPI PDF generation, direct PDF
+printing through Brother and Phomemo flows, config ordering, progress, logging,
+Brother streams compared with `brother_ql`, and a status block captured from a
+QL-1110NWB.
 
 Useful additional checks are:
 

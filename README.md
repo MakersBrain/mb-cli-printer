@@ -130,6 +130,8 @@ mbprint print -l label.json -c inventory.csv --model m110 \
 Capture the framed bytes by adding `--out job.bin`. Details about PDF fidelity,
 printer raster previews, alignment, protocols, media, and connection methods are
 in [Printers and transports](docs/printers-and-transports.md).
+The complete generate-to-print workflow is in
+[PDF generation and direct printing](docs/pdf-workflows.md).
 
 ## Commands
 
@@ -147,6 +149,7 @@ in [Printers and transports](docs/printers-and-transports.md).
 | `wifi` | scan, inspect, or configure a Brother QL's wireless settings |
 | `usb-list` | list attached supported USB printers and stable selectors |
 | `usb-info` | show USB descriptors, IEEE 1284 device ID, and port status |
+| `usb-report` | fetch a Brother configuration/system report over USB |
 | `config` | inspect and change persistent defaults |
 
 Every command accepts `-v`, `-vv`, `-q`, `--log-file`, and `--plain`, before or
@@ -194,6 +197,7 @@ More model- and transport-specific guidance is in
 ## Documentation
 
 - [Data, templates, and filters](docs/data-and-templates.md)
+- [PDF generation and direct printing](docs/pdf-workflows.md)
 - [Printers and transports](docs/printers-and-transports.md)
 - [CLI reference](docs/cli-reference.md)
 - [Brother wireless configuration](docs/brother-wireless-config.md)
@@ -208,6 +212,6 @@ uv sync
 uv run pytest tests -q
 ```
 
-The suite currently contains 88 hardware-free tests. See
+The suite currently contains 108 hardware-free tests. See
 [Development and reverse engineering](docs/development.md) for the module map,
 test coverage, and the Nix-based printer research tools.

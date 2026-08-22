@@ -52,7 +52,8 @@ than applying filter, limit, or copy selection.
 
 ## Printer and media options
 
-These are accepted by `print`, `print-pdf`, `status`, and `test` unless noted otherwise.
+These are accepted by `print`, `print-pdf`, `status`, and `test` unless noted
+otherwise.
 
 | Option | Meaning |
 |---|---|
@@ -90,8 +91,8 @@ These are accepted by `print`, `print-pdf`, `status`, and `test`.
 | `--chunk-delay MS` | override inter-chunk pacing |
 | `-o`, `--out PATH` | capture bytes for the file transport |
 
-`print` additionally accepts `--dry-run`; with `--out`, it captures the bytes
-that would have been sent.
+`print` and `print-pdf` additionally accept `--dry-run`; with `--out`, they
+capture the bytes that would have been sent.
 
 ## Direct PDF printing
 
@@ -102,8 +103,8 @@ mbprint print-pdf PDF [--pages 1,3-5] [--copies N] [--fit] [printer options]
 Each selected PDF page is one label. Pages are rasterized at the selected
 printer's native DPI and sent through the same protocol and transport as
 `print`, including Brother QL and Phomemo models. All selected pages must have
-the same physical size. On Brother QL
-printers the page must match the loaded or selected DK media; a transposed page
+the same physical size. On Brother QL printers the page must match the loaded
+or selected DK media; a transposed page
 is rotated automatically. `--fit` explicitly permits scaling a mismatched page.
 `--dry-run --out job.bin` captures the resulting printer byte stream.
 
@@ -119,6 +120,11 @@ is rotated automatically. `--fit` explicitly permits scaling a mismatched page.
 | `--no-marks` | omit cut marks |
 | `--bilevel` | apply print halftoning |
 | `--scale N` | explicit render scale, overriding automatic model DPI |
+
+Without `--model` or `--device`, the layout's `dotsPerMm` controls PDF artwork
+resolution. Selecting a model uses its exact native DPI and does not change the
+physical PDF page size. See [PDF generation and direct printing](pdf-workflows.md)
+for the complete workflow and media-safety behavior.
 
 ## Preview options
 

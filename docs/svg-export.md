@@ -33,6 +33,24 @@ export chooses compatible generic families (`sans-serif`, `serif`, or
 text to paths in a design tool when exact cross-machine font outlines are more
 important than editable text.
 
+## Convert SVG back to label.json
+
+```sh
+mbprint import-svg label.svg -o label.json
+```
+
+SVGs exported by `mbprint` contain the original editable layout as metadata,
+so their text templates, QR data, fields, and element settings round-trip
+exactly. The metadata does not affect how browsers or design tools display the
+file.
+
+For SVGs made elsewhere, the importer converts text, rectangles, ellipses,
+horizontal and vertical lines, images, basic transforms, and elements marked
+with `data-mb="qr"` or `data-mb="barcode"`. It reports paths, polygons,
+diagonal lines, skew transforms, and other features that `label.json` cannot
+represent. Keep the original SVG when those warnings matter; it can still be
+used directly as an SVG label template.
+
 ## Records, fields, and copies
 
 The SVG command accepts the same layout/data options as `print`, `pdf`, and

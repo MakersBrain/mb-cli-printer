@@ -147,6 +147,7 @@ The complete generate-to-print workflow is in
 | `print-pdf` | rasterize and print one exact-size label per PDF page |
 | `pdf` | render records to a PDF |
 | `svg` | render one exact-size SVG file per label |
+| `import-svg` | convert SVG back to an editable `label.json` layout |
 | `preview` | render records to PNG, optionally as the fitted printer raster |
 | `fields` | inspect placeholders and CSV mappings |
 | `printers` | list known models, protocols, head widths, and resolutions |
@@ -220,6 +221,5 @@ uv sync
 uv run pytest tests -q
 ```
 
-The suite currently contains 111 hardware-free tests. See
-[Development and reverse engineering](docs/development.md) for the module map,
-test coverage, and the Nix-based printer research tools.
+See [Development and reverse engineering](docs/development.md) for the
+hardware-free test suite, module map, and Nix-based printer research tools.

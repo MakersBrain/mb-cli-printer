@@ -719,6 +719,19 @@ def cmd_svg(args: Args) -> int:
     return 0
 
 
+def cmd_import_svg(args: Args) -> int:
+    """Convert an SVG document into an editable label.json layout."""
+    from mbprint import svgimport
+
+    path, warnings = svgimport.write(args.svg_file, args.out)
+    for warning in warnings:
+        log.warning("%s", warning)
+    print(path)
+    if warnings:
+        print(f"converted with {len(warnings)} warning(s)", file=sys.stderr)
+    return 0
+
+
 def cmd_print(args: Args) -> int:
     label = _resolve_label(args)
     records = _resolve_records(args)
@@ -1334,6 +1347,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="output directory, or a .svg path when rendering one record",
     )
     sp.set_defaults(func=cmd_svg)
+
+    sp = sub.add_parser(
+        "import-svg", help="convert an SVG document to editable label.json", parents=[common]
+    )
+    sp.add_argument("svg_file", metavar="SVG", help="SVG document to convert")
+    sp.add_argument("--out", "-o", default="label.json", help="output label.json path")
+    sp.set_defaults(func=cmd_import_svg)
 
     sp = sub.add_parser("preview", help="render records to PNG files", parents=[common])
     add_source_options(sp)

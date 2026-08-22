@@ -9,7 +9,7 @@ Run the hardware-free suite with:
 uv run pytest tests -q
 ```
 
-The 111 tests cover templates, filters, optional segments, missing fields,
+The tests cover templates, filters, optional segments, missing fields,
 column mapping, copies, raster packing, alignment, rotation, all protocol
 frames, MTU clamping, model detection, exact-DPI PDF generation, direct PDF
 printing through Brother and Phomemo flows, vector SVG output, config ordering,

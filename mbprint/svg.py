@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,20 @@ def _raster_data_uri(el: layout.Element, width: int, height: int) -> str:
     buffer = io.BytesIO()
     layer.save(buffer, "PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _label_data(label: layout.Label) -> dict[str, Any]:
+    """The editable source stored in exports for an exact SVG -> JSON round trip."""
+    return {
+        "name": label.name,
+        "widthMm": label.width_mm,
+        "heightMm": label.height_mm,
+        "dotsPerMm": label.dots_per_mm,
+        "round": label.round,
+        "continuous": label.continuous,
+        "elements": label.elements,
+        "fields": label.fields,
+    }
 
 
 def _text(parent: ET.Element, el: layout.Element, x: float, y: float, w: float, h: float) -> None:
@@ -160,6 +175,8 @@ def render(label: layout.Label, record: layout.Record | None = None, decimal: st
     if label.name:
         title = _node(root, "title", {})
         title.text = label.name
+    metadata = _node(root, "metadata", {"id": "mbprint-label", "data-format": "label-json"})
+    metadata.text = json.dumps(_label_data(label), ensure_ascii=False, separators=(",", ":"))
     defs = _node(root, "defs", {})
     content = _node(root, "g", {})
     if label.round:
